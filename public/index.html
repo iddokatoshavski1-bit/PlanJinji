@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PlanJinji — Train. Log. Grow.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+<style>
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  body { margin: 0; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+
+// ---------- API helper ----------
+async function api(path, { method = "GET", body, headers = {} } = {}) {
+  const res = await fetch("/api" + path, {
+    method,
+    headers: { "Content-Type": "application/json", ...headers },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong — try again.");
+  return data;
+}
+
+// ---------- design tokens ----------
+const T = {
+  bg: "#F5F1EB", card: "#FFFFFF", ink: "#241A12", sub: "#6B5F53", line: "#E4DCD1",
+  accent: "#D9641E", accentDark: "#B14E13", accentSoft: "#F9E9DC", good: "#2A7A4B",
+};
+const fontStack = "'Archivo', system-ui, sans-serif";
+const displayStyle = { fontFamily: fontStack, fontWeight: 800, letterSpacing: "-0.02em", textTransform: "uppercase" };
+const FACILITY_OPTIONS = [
+  "Full gym", "Home dumbbells", "Barbell + plates", "Machines",
+  "Resistance bands", "Bodyweight only", "Kettlebells", "Cardio equipment",
+];
+const isValidPin = (p) => /^\d{4}$/.test(p);
+const NUM_WEEKS = 5;
+
+// ---------- mascots ----------
+const PHRASES = {
+  go: ["The bar won't lift itself!", "Are you a lifter or a licker?!", "Sweat is just fat crying!", "Gravity called. It's scared.", "Lift heavy, nap heavier!", "Excuses don't burn calories!", "Make the dumbbells nervous!"],
+  done: ["You made the dumbbells cry!", "Protein shake: EARNED.", "Certified beast. Paperwork pending.", "Muscles +1. Excuses 0.", "The floor felt that one!", "Go walk like a hero now!"],
+  wait: ["Coach is cooking something spicy!", "Plan loading… flex while you wait!", "Big gains incoming!"],
+};
+
+const MASCOTS = [
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M42 100 Q18 92 22 66 Q24 50 36 46" fill="none" stroke={T.ink} strokeWidth="15" strokeLinecap="round" />
+      <path d="M42 100 Q18 92 22 66 Q24 50 36 46" fill="none" stroke="#F2B48C" strokeWidth="10" strokeLinecap="round" />
+      <circle cx="26" cy="60" r="12" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <circle cx="37" cy="45" r="8" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <path d="M108 100 Q132 92 128 66 Q126 50 114 46" fill="none" stroke={T.ink} strokeWidth="15" strokeLinecap="round" />
+      <path d="M108 100 Q132 92 128 66 Q126 50 114 46" fill="none" stroke="#F2B48C" strokeWidth="10" strokeLinecap="round" />
+      <circle cx="124" cy="60" r="12" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <circle cx="113" cy="45" r="8" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <path d="M38 128 Q36 90 50 86 Q60 82 75 82 Q90 82 100 86 Q114 90 112 128 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
+      <path d="M60 96 Q75 104 90 96" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.6" />
+      <path d="M75 100 L75 120" stroke={T.ink} strokeWidth="2.5" opacity="0.4" />
+      <rect x="66" y="66" width="18" height="14" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <circle cx="75" cy="50" r="24" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
+      <path d="M51 48 Q47 20 75 20 Q103 20 99 48 Q97 34 87 33 Q91 27 81 26 Q71 23 63 31 Q53 31 51 41 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
+      <circle cx="67" cy="50" r="2.6" fill={T.ink} />
+      <circle cx="83" cy="50" r="2.6" fill={T.ink} />
+      <path d="M66 59 Q75 68 84 59" fill="none" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
+      <circle cx="61" cy="57" r="3.2" fill="#F09A6B" opacity="0.8" />
+      <circle cx="89" cy="57" r="3.2" fill="#F09A6B" opacity="0.8" />
+      <circle cx="70" cy="56" r="1" fill="#C4763F" /><circle cx="75" cy="57" r="1" fill="#C4763F" /><circle cx="80" cy="56" r="1" fill="#C4763F" />
+    </svg>
+  ),
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M20 34 Q75 16 130 34" fill="none" stroke={T.ink} strokeWidth="5" strokeLinecap="round" />
+      <rect x="12" y="20" width="14" height="30" rx="5" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <rect x="124" y="20" width="14" height="30" rx="5" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <path d="M50 32 Q52 48 60 62" fill="none" stroke="#C88A5A" strokeWidth="11" strokeLinecap="round" />
+      <path d="M100 32 Q98 48 90 62" fill="none" stroke="#C88A5A" strokeWidth="11" strokeLinecap="round" />
+      <circle cx="56" cy="44" r="8" fill="#C88A5A" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="94" cy="44" r="8" fill="#C88A5A" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="75" cy="56" r="17" fill="#C88A5A" stroke={T.ink} strokeWidth="3" />
+      <path d="M59 54 Q58 38 75 38 Q92 38 91 54 Q87 44 75 44 Q63 44 59 54 Z" fill={T.ink} />
+      <path d="M90 50 Q106 48 104 68 Q99 56 88 56 Z" fill={T.ink} />
+      <circle cx="69" cy="56" r="2.2" fill={T.ink} />
+      <circle cx="81" cy="56" r="2.2" fill={T.ink} />
+      <path d="M69 64 Q75 69 81 64" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M56 128 Q52 80 65 78 Q75 76 85 78 Q98 80 94 128 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
+      <path d="M64 92 Q75 98 86 92" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.6" />
+      <path d="M60 112 L90 112" stroke={T.ink} strokeWidth="3" />
+    </svg>
+  ),
+  (key) => (
+    <svg key={key} viewBox="0 0 140 132" width="105" height="99" aria-hidden="true">
+      <circle cx="68" cy="40" r="17" fill="#8C5A3A" stroke={T.ink} strokeWidth="3" />
+      <path d="M52 38 Q51 23 68 23 Q85 23 84 38 Q79 29 68 29 Q57 29 52 38 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <circle cx="68" cy="18" r="8" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="62" cy="40" r="2.2" fill={T.ink} />
+      <circle cx="74" cy="40" r="2.2" fill={T.ink} />
+      <path d="M62 48 Q68 53 74 48" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M54 62 Q42 84 34 92 Q28 102 42 104 L52 94 Q62 88 66 82" fill="none" stroke={T.ink} strokeWidth="13" strokeLinecap="round" />
+      <path d="M82 62 Q94 84 102 92 Q108 102 94 104 L84 94 Q74 88 70 82" fill="none" stroke={T.ink} strokeWidth="13" strokeLinecap="round" />
+      <path d="M52 58 Q68 96 84 58 Q84 55 68 55 Q52 55 52 58 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
+      <path d="M56 62 L64 92 M80 62 L72 92" stroke="#8C5A3A" strokeWidth="8" strokeLinecap="round" />
+      <path d="M58 98 Q58 88 68 88 Q78 88 78 98" fill="none" stroke={T.ink} strokeWidth="5" />
+      <circle cx="68" cy="110" r="14" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <text x="68" y="115" textAnchor="middle" fontFamily={fontStack} fontWeight="900" fontSize="11" fill="#fff">32</text>
+    </svg>
+  ),
+];
+
+function Mascot({ mood = "go" }) {
+  const [pick] = useState(() => ({
+    m: Math.floor(Math.random() * MASCOTS.length),
+    p: Math.floor(Math.random() * PHRASES[mood].length),
+  }));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, margin: "4px 0 14px" }}>
+      {MASCOTS[pick.m]("mascot")}
+      <div style={{
+        position: "relative", background: "#fff", border: "2.5px solid " + T.ink, borderRadius: 14,
+        padding: "10px 16px", fontFamily: fontStack, fontWeight: 800, fontSize: 16, color: T.ink,
+        boxShadow: "3px 3px 0 " + T.accent, transform: "rotate(-1.5deg)", maxWidth: 260,
+      }}>
+        <span style={{
+          position: "absolute", left: -9, top: "50%", marginTop: -6, width: 0, height: 0,
+          borderTop: "7px solid transparent", borderBottom: "7px solid transparent",
+          borderRight: "9px solid " + T.ink,
+        }} />
+        {PHRASES[mood][pick.p]}
+      </div>
+    </div>
+  );
+}
+
+// ---------- misc helpers ----------
+function estimateMinutes(exercises) {
+  let sec = 0;
+  for (const ex of exercises) {
+    const sets = parseInt(ex.sets) || 3;
+    const rest = parseInt(ex.rest) || 60;
+    sec += sets * (45 + rest);
+  }
+  return Math.max(5, Math.round(sec / 60));
+}
+
+function lastWeightFor(logs, exName) {
+  for (let i = (logs || []).length - 1; i >= 0; i--) {
+    const hit = (logs[i].entries || []).find((e) => e.exercise === exName && e.weightUsed);
+    if (hit) return { weight: hit.weightUsed, date: logs[i].date };
+  }
+  return null;
+}
+
+// ---------- UI atoms ----------
+function PJMark({ size = 34 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 9,
+      background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`,
+      color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center",
+      fontFamily: fontStack, fontWeight: 900, fontSize: size * 0.42, letterSpacing: "-0.03em",
+      boxShadow: "2px 2px 0 " + T.ink, flexShrink: 0,
+    }}>PJ</div>
+  );
+}
+
+function Btn({ children, onClick, kind = "primary", disabled, small }) {
+  const base = {
+    fontFamily: fontStack, fontWeight: 700, borderRadius: 10,
+    padding: small ? "6px 12px" : "12px 20px", fontSize: small ? 13 : 15,
+    cursor: disabled ? "not-allowed" : "pointer", border: "2px solid " + T.ink,
+    transition: "transform .08s ease", opacity: disabled ? 0.5 : 1,
+  };
+  const kinds = {
+    primary: { background: T.ink, color: "#fff" },
+    accent: { background: T.accent, color: "#fff", borderColor: T.accentDark },
+    ghost: { background: "transparent", color: T.ink },
+  };
+  return (
+    <button style={{ ...base, ...kinds[kind] }} disabled={disabled} onClick={onClick}
+      onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
+      onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+      onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}>
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "block", marginBottom: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: T.sub, marginBottom: 6 }}>{label}</div>
+      {children}
+    </label>
+  );
+}
+
+const inputStyle = {
+  width: "100%", boxSizing: "border-box", border: "2px solid " + T.line, borderRadius: 10,
+  padding: "11px 14px", fontSize: 15, fontFamily: fontStack, color: T.ink, background: "#fff", outline: "none",
+};
+const pinStyle = { ...inputStyle, letterSpacing: "0.4em", fontWeight: 800, fontSize: 20, textAlign: "center" };
+
+function Card({ children, style }) {
+  return (
+    <div style={{ background: T.card, border: "2px solid " + T.ink, borderRadius: 16, padding: 24, boxShadow: "4px 4px 0 " + T.ink, ...style }}>
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{ fontSize: 12, fontWeight: 800, color: T.accent, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>
+      {children}
+    </div>
+  );
+}
+
+function Tab({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      fontFamily: fontStack, fontWeight: 800, fontSize: 13, padding: "7px 14px", borderRadius: 999,
+      cursor: "pointer", border: "2px solid " + (active ? T.accentDark : T.line),
+      background: active ? T.accent : "#fff", color: active ? "#fff" : T.sub,
+    }}>{children}</button>
+  );
+}
+
+// ---------- main app ----------
+function PlanJinji() {
+  const [screen, setScreen] = useState("login");
+  const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const [nameInput, setNameInput] = useState("");
+  const [clientId, setClientId] = useState(null);
+  const [client, setClient] = useState(null);
+  const [clientPin, setClientPin] = useState("");     // verified PIN kept for API calls
+  const [clientPinInput, setClientPinInput] = useState("");
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [firstName, setFirstName] = useState("");
+
+  const [goals, setGoals] = useState("");
+  const [freq, setFreq] = useState("3");
+  const [facilities, setFacilities] = useState([]);
+  const [newPin, setNewPin] = useState("");
+
+  const [comments, setComments] = useState({});
+  const [weightsUsed, setWeightsUsed] = useState({});
+  const [sessionNote, setSessionNote] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const [pinInput, setPinInput] = useState("");
+  const [coachPin, setCoachPin] = useState("");       // verified coach PIN for API calls
+  const [clientList, setClientList] = useState([]);
+  const [coachClient, setCoachClient] = useState(null);
+  const [weekIdx, setWeekIdx] = useState(0);
+  const [dayIdx, setDayIdx] = useState(0);
+  const [newEx, setNewEx] = useState({ name: "", sets: "", reps: "", weight: "", rest: "" });
+
+  const clientHeaders = () => ({ "x-client-pin": clientPin });
+  const coachHeaders = () => ({ "x-coach-pin": coachPin });
+
+  function resetAll() {
+    setScreen("login"); setNameInput(""); setPinInput(""); setClientPinInput(""); setNewPin("");
+    setClientPin(""); setCoachPin(""); setError(""); setSaved(false); setClient(null); setCoachClient(null);
+  }
+
+  function enterClientSpace(record, pin) {
+    setClient(record); setClientPin(pin);
+    setComments({}); setWeightsUsed({}); setSessionNote(""); setSaved(false);
+    setScreen("client");
+  }
+
+  // ----- login -----
+  async function handleLogin() {
+    setBusy(true); setError("");
+    try {
+      const r = await api("/login", { method: "POST", body: { name: nameInput } });
+      setClientId(r.id);
+      if (r.status === "new") setScreen("onboarding");
+      else {
+        setNeedsPinSetup(!!r.needsPinSetup);
+        setFirstName(r.firstName || nameInput.trim().split(" ")[0]);
+        setClientPinInput("");
+        setScreen("clientPin");
+      }
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  // ----- client PIN -----
+  async function handleClientPin() {
+    setBusy(true); setError("");
+    try {
+      if (needsPinSetup) {
+        if (!isValidPin(clientPinInput)) throw new Error("PIN must be exactly 4 digits.");
+        await api(`/client/${clientId}/set-pin`, { method: "POST", body: { pin: clientPinInput } });
+      }
+      const record = await api(`/client/${clientId}`, { headers: { "x-client-pin": clientPinInput } });
+      enterClientSpace(record, clientPinInput);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  // ----- onboarding -----
+  function toggleFacility(f) {
+    setFacilities((cur) => (cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f]));
+  }
+
+  async function handleOnboardingSave() {
+    setBusy(true); setError("");
+    try {
+      const record = await api("/clients", {
+        method: "POST",
+        body: { name: nameInput, goals, frequency: freq, facilities, pin: newPin },
+      });
+      enterClientSpace(record, newPin);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  // ----- client session -----
+  async function handleFinishSession() {
+    setBusy(true); setError("");
+    try {
+      const w = Math.min(client.progress.week, NUM_WEEKS - 1);
+      const d = Math.min(client.progress.day, client.plan.weeks[w].days.length - 1);
+      const exercises = client.plan.weeks[w].days[d].exercises;
+      const record = await api(`/client/${clientId}/finish`, {
+        method: "POST", headers: clientHeaders(),
+        body: {
+          entries: exercises.map((ex, i) => ({ exercise: ex.name, weightUsed: weightsUsed[i] || "", comment: comments[i] || "" })),
+          sessionNote,
+        },
+      });
+      setClient(record);
+      setSaved(true);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  // ----- coach -----
+  async function handleCoachPin() {
+    setBusy(true); setError("");
+    try {
+      await api("/coach/login", { method: "POST", body: { pin: pinInput } });
+      setCoachPin(pinInput);
+      const list = await api("/coach/clients", { headers: { "x-coach-pin": pinInput } });
+      setClientList(list);
+      setCoachClient(null);
+      setScreen("coach");
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  async function openCoachClient(id) {
+    setBusy(true); setError("");
+    try {
+      const c = await api(`/coach/client/${id}`, { headers: coachHeaders() });
+      setCoachClient(c);
+      setWeekIdx(Math.min(c.progress.week, NUM_WEEKS - 1));
+      setDayIdx(0);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
+  async function saveDay(w, d, title, exercises) {
+    try {
+      const c = await api(`/coach/client/${coachClient.id}/day`, {
+        method: "PUT", headers: coachHeaders(),
+        body: { week: w, day: d, title, exercises },
+      });
+      setCoachClient(c);
+    } catch (e) { setError(e.message); }
+  }
+
+  function currentDay() {
+    const week = coachClient.plan.weeks[weekIdx];
+    return week.days[Math.min(dayIdx, week.days.length - 1)];
+  }
+
+  function addExercise() {
+    if (!newEx.name.trim()) return;
+    const day = currentDay();
+    saveDay(weekIdx, dayIdx, day.title, [...day.exercises, { ...newEx, name: newEx.name.trim(), rest: newEx.rest || "90" }]);
+    setNewEx({ name: "", sets: "", reps: "", weight: "", rest: "" });
+  }
+
+  function removeExercise(i) {
+    const day = currentDay();
+    saveDay(weekIdx, dayIdx, day.title, day.exercises.filter((_, idx) => idx !== i));
+  }
+
+  function renameDay(title) {
+    // update locally right away for smooth typing, persist on blur
+    const weeks = coachClient.plan.weeks.map((wk, wi) =>
+      wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, title })) }
+    );
+    setCoachClient({ ...coachClient, plan: { weeks } });
+  }
+
+  async function copyWeekForward() {
+    if (weekIdx >= NUM_WEEKS - 1) return;
+    setBusy(true);
+    const src = coachClient.plan.weeks[weekIdx];
+    let latest = coachClient;
+    for (let d = 0; d < src.days.length; d++) {
+      latest = await api(`/coach/client/${coachClient.id}/day`, {
+        method: "PUT", headers: coachHeaders(),
+        body: { week: weekIdx + 1, day: d, title: src.days[d].title, exercises: src.days[d].exercises },
+      }).catch(() => latest);
+    }
+    setCoachClient(latest);
+    setWeekIdx(weekIdx + 1);
+    setBusy(false);
+  }
+
+  async function resetClientPin() {
+    try {
+      await api(`/coach/client/${coachClient.id}/reset-pin`, { method: "POST", headers: coachHeaders() });
+      setCoachClient({ ...coachClient, profile: { ...coachClient.profile, pin: null } });
+    } catch (e) { setError(e.message); }
+  }
+
+  async function changeCoachPin() {
+    const p = window.prompt("New coach PIN (4-8 digits):");
+    if (!p) return;
+    try {
+      await api("/coach/change-pin", { method: "POST", headers: coachHeaders(), body: { pin: p } });
+      setCoachPin(p);
+      window.alert("Coach PIN updated.");
+    } catch (e) { setError(e.message); }
+  }
+
+  async function aiSuggestWeek() {
+    setAiBusy(true); setError("");
+    try {
+      const c = await api(`/coach/client/${coachClient.id}/ai-week`, {
+        method: "POST", headers: coachHeaders(), body: { week: weekIdx },
+      });
+      setCoachClient(c);
+    } catch (e) { setError(e.message); }
+    setAiBusy(false);
+  }
+
+  // ---------- layout shell ----------
+  const shell = (inner, { wide } = {}) => (
+    <div style={{ minHeight: "100vh", background: T.bg, fontFamily: fontStack, color: T.ink, display: "flex", flexDirection: "column" }}>
+      <nav style={{
+        position: "sticky", top: 0, zIndex: 10, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(6px)",
+        borderBottom: "2px solid " + T.ink, padding: "12px 20px",
+      }}>
+        <div style={{ maxWidth: wide ? 860 : 720, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={resetAll}>
+            <PJMark size={30} />
+            <div style={{ ...displayStyle, fontSize: 19 }}>Plan<span style={{ color: T.accent }}>Jinji</span></div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {screen === "login" && (
+              <button onClick={() => { setScreen("coachPin"); setError(""); }}
+                style={{ background: "none", border: "none", color: T.ink, fontFamily: fontStack, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                Coach login
+              </button>
+            )}
+            {screen !== "login" && (
+              <button onClick={resetAll}
+                style={{ background: "none", border: "2px solid " + T.ink, borderRadius: 8, padding: "5px 12px", color: T.ink, fontFamily: fontStack, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                Log out
+              </button>
+            )}
+          </div>
+        </div>
+      </nav>
+      <main style={{ flex: 1, padding: "28px 16px" }}>
+        <div style={{ maxWidth: wide ? 860 : 720, margin: "0 auto" }}>
+          {inner}
+          {error && (
+            <div style={{ marginTop: 16, padding: "10px 14px", background: "#FDEBEA", border: "2px solid #C0392B", borderRadius: 10, color: "#8E2418", fontSize: 14 }}>
+              {error}
+            </div>
+          )}
+        </div>
+      </main>
+      <footer style={{ background: T.ink, color: "#EDE6DC", padding: "20px 16px", marginTop: 30 }}>
+        <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <PJMark size={26} />
+            <span style={{ ...displayStyle, fontSize: 15 }}>PlanJinji</span>
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>© {new Date().getFullYear()} PlanJinji · Train hard, log harder.</div>
+        </div>
+      </footer>
+    </div>
+  );
+
+  // ---- LOGIN ----
+  if (screen === "login")
+    return shell(
+      <div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24, alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <div style={{ ...displayStyle, fontSize: 46, lineHeight: 1.02, marginBottom: 10 }}>
+              Train.<br />Log.<br /><span style={{ color: T.accent }}>Grow.</span>
+            </div>
+            <p style={{ color: T.sub, fontSize: 16, lineHeight: 1.5, margin: 0 }}>
+              Your personal training space — the plan your coach built for you, week by week, with your feedback flowing straight back.
+            </p>
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
+            {MASCOTS[0]("hero1")}{MASCOTS[1]("hero2")}
+          </div>
+        </div>
+
+        <Card>
+          <SectionLabel>Athlete login</SectionLabel>
+          <Field label="Full name">
+            <input style={inputStyle} value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              placeholder="e.g. Dana Levi" autoFocus />
+          </Field>
+          <Btn kind="accent" onClick={handleLogin} disabled={busy}>{busy ? "Opening…" : "Enter my space"}</Btn>
+        </Card>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginTop: 24 }}>
+          {[["📋", "Personal plans", "Built around your goals & gear"],
+            ["🗓", "5-week programs", "Know exactly what's next"],
+            ["💬", "Direct feedback", "Your coach reads every note"]].map(([icon, title, sub]) => (
+            <div key={title} style={{ background: "#fff", border: "2px solid " + T.line, borderRadius: 14, padding: 16 }}>
+              <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
+              <div style={{ ...displayStyle, fontSize: 14, marginBottom: 3 }}>{title}</div>
+              <div style={{ color: T.sub, fontSize: 13 }}>{sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>,
+      { wide: true }
+    );
+
+  // ---- CLIENT PIN ----
+  if (screen === "clientPin")
+    return shell(
+      <Card>
+        <div style={{ ...displayStyle, fontSize: 26, marginBottom: 6 }}>
+          {needsPinSetup ? "Secure your space" : `Welcome back, ${firstName}`}
+        </div>
+        <p style={{ color: T.sub, fontSize: 14, marginBottom: 20 }}>
+          {needsPinSetup ? "Choose a 4-digit PIN. You'll use it every time you log in." : "Enter your 4-digit PIN."}
+        </p>
+        <Field label={needsPinSetup ? "Create PIN" : "PIN"}>
+          <input style={pinStyle} type="password" inputMode="numeric" maxLength={4}
+            value={clientPinInput}
+            onChange={(e) => setClientPinInput(e.target.value.replace(/\D/g, ""))}
+            onKeyDown={(e) => e.key === "Enter" && handleClientPin()}
+            placeholder="••••" autoFocus />
+        </Field>
+        <Btn kind="accent" onClick={handleClientPin} disabled={busy}>
+          {busy ? "Checking…" : needsPinSetup ? "Save PIN & enter" : "Enter my space"}
+        </Btn>
+      </Card>
+    );
+
+  // ---- ONBOARDING ----
+  if (screen === "onboarding")
+    return shell(
+      <Card>
+        <SectionLabel>First session</SectionLabel>
+        <div style={{ ...displayStyle, fontSize: 30, marginBottom: 4 }}>Welcome, {nameInput.trim().split(" ")[0]}.</div>
+        <p style={{ color: T.sub, fontSize: 15, marginBottom: 24 }}>A few quick questions so your coach can build your plan.</p>
+        <Field label="What are your goals?">
+          <textarea style={{ ...inputStyle, minHeight: 80, resize: "vertical" }} value={goals}
+            onChange={(e) => setGoals(e.target.value)} placeholder="Lose weight, build strength, first pull-up…" />
+        </Field>
+        <Field label="How often do you work out?">
+          <select style={inputStyle} value={freq} onChange={(e) => setFreq(e.target.value)}>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+              <option key={n} value={n}>{n} {n === 1 ? "time" : "times"} a week</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="What equipment do you have access to?">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {FACILITY_OPTIONS.map((f) => {
+              const on = facilities.includes(f);
+              return (
+                <button key={f} onClick={() => toggleFacility(f)} style={{
+                  fontFamily: fontStack, fontSize: 13, fontWeight: 600, padding: "7px 12px", borderRadius: 999, cursor: "pointer",
+                  border: "2px solid " + (on ? T.accent : T.line), background: on ? T.accentSoft : "#fff", color: on ? T.accentDark : T.sub,
+                }}>{on ? "✓ " : ""}{f}</button>
+              );
+            })}
+          </div>
+        </Field>
+        <Field label="Choose a 4-digit PIN (for logging in)">
+          <input style={pinStyle} type="password" inputMode="numeric" maxLength={4} value={newPin}
+            onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="••••" />
+        </Field>
+        <Btn kind="accent" onClick={handleOnboardingSave} disabled={busy}>{busy ? "Saving…" : "Save & enter my space"}</Btn>
+      </Card>
+    );
+
+  // ---- CLIENT SPACE ----
+  if (screen === "client" && client) {
+    const done = client.progress.week >= NUM_WEEKS;
+    const w = Math.min(client.progress.week, NUM_WEEKS - 1);
+    const d = Math.min(client.progress.day, client.plan.weeks[w].days.length - 1);
+    const day = client.plan.weeks[w].days[d];
+    const exercises = day.exercises || [];
+    const estMin = estimateMinutes(exercises);
+    const lastLog = (client.logs || [])[client.logs.length - 1];
+
+    return shell(
+      <div>
+        <div style={{ ...displayStyle, fontSize: 30, marginBottom: 2 }}>{client.profile.name}</div>
+        <div style={{ color: T.sub, fontSize: 14, marginBottom: 20 }}>
+          {client.profile.frequency}×/week · {client.profile.goals}
+        </div>
+
+        {done ? (
+          <Card>
+            <Mascot mood="done" />
+            <div style={{ ...displayStyle, fontSize: 22, color: T.good, marginBottom: 6 }}>Program complete! 🏆</div>
+            <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>You finished all 5 weeks. Your coach will load the next block.</p>
+          </Card>
+        ) : exercises.length === 0 ? (
+          <Card>
+            <Mascot mood="wait" />
+            <div style={{ ...displayStyle, fontSize: 20, marginBottom: 6 }}>No plan yet</div>
+            <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>Your coach has your details and is building your workout. Check back soon.</p>
+          </Card>
+        ) : saved ? (
+          <Card>
+            <Mascot mood="done" />
+            <div style={{ ...displayStyle, fontSize: 22, color: T.good, marginBottom: 6 }}>Session logged ✓</div>
+            <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>Your coach will see your feedback. Great work today.</p>
+          </Card>
+        ) : (
+          <div>
+            <Mascot mood="go" />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              <SectionLabel>Week {w + 1} · {day.title} ({d + 1}/{client.plan.weeks[w].days.length})</SectionLabel>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.sub }}>⏱ ~{estMin} min total</span>
+            </div>
+            {exercises.map((ex, i) => {
+              const last = lastWeightFor(client.logs, ex.name);
+              return (
+                <Card key={i} style={{ marginBottom: 14, padding: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                    <div style={{ ...displayStyle, fontSize: 18 }}>{ex.name}</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: T.accent, color: "#fff", borderRadius: 8, padding: "4px 10px" }}>
+                        {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets || ex.reps || "—"}
+                        {ex.weight ? ` @ ${ex.weight}` : ""}
+                      </span>
+                      {ex.rest && (
+                        <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
+                          ⏲ rest {ex.rest}s
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {last && (
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "3px 8px" }}>
+                      Last time: {last.weight} ({new Date(last.date).toLocaleDateString()})
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, marginTop: 12 }}>
+                    <input style={{ ...inputStyle, fontSize: 14, padding: "9px 10px" }} placeholder="Weight used" value={weightsUsed[i] || ""}
+                      onChange={(e) => setWeightsUsed({ ...weightsUsed, [i]: e.target.value })} />
+                    <input style={{ ...inputStyle, fontSize: 14, padding: "9px 10px" }} placeholder="How was it? (too heavy, easy, felt it in the knee…)"
+                      value={comments[i] || ""} onChange={(e) => setComments({ ...comments, [i]: e.target.value })} />
+                  </div>
+                </Card>
+              );
+            })}
+            <Card style={{ marginBottom: 14, padding: 18, background: T.accentSoft, borderColor: T.accentDark, boxShadow: "4px 4px 0 " + T.accentDark }}>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>
+                ⏱ Estimated session time: ~{estMin} minutes <span style={{ color: T.sub, fontWeight: 600 }}>(work + rest)</span>
+              </div>
+              <Field label="Overall — how was today's session?">
+                <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={sessionNote}
+                  onChange={(e) => setSessionNote(e.target.value)} placeholder="Energy, soreness, anything the coach should know…" />
+              </Field>
+              <Btn kind="accent" onClick={handleFinishSession} disabled={busy}>
+                {busy ? "Saving…" : "Finish & send to coach"}
+              </Btn>
+            </Card>
+          </div>
+        )}
+
+        {lastLog && !saved && (
+          <div style={{ color: T.sub, fontSize: 13, marginTop: 8 }}>
+            Last session logged: {new Date(lastLog.date).toLocaleDateString()}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ---- COACH PIN ----
+  if (screen === "coachPin")
+    return shell(
+      <Card>
+        <div style={{ ...displayStyle, fontSize: 26, marginBottom: 6 }}>Coach access</div>
+        <p style={{ color: T.sub, fontSize: 14, marginBottom: 20 }}>Enter your coach PIN.</p>
+        <Field label="PIN">
+          <input style={pinStyle} type="password" inputMode="numeric" maxLength={8} value={pinInput}
+            onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+            onKeyDown={(e) => e.key === "Enter" && handleCoachPin()} placeholder="••••••" autoFocus />
+        </Field>
+        <Btn onClick={handleCoachPin} disabled={busy}>{busy ? "Checking…" : "Open dashboard"}</Btn>
+      </Card>
+    );
+
+  // ---- COACH DASHBOARD ----
+  if (screen === "coach") {
+    if (!coachClient)
+      return shell(
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ ...displayStyle, fontSize: 30 }}>Clients</div>
+            <Btn small kind="ghost" onClick={changeCoachPin}>Change coach PIN</Btn>
+          </div>
+          {clientList.length === 0 ? (
+            <Card>
+              <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>
+                No clients yet. Share the site link — when someone signs in with their name, they'll show up here.
+              </p>
+            </Card>
+          ) : (
+            clientList.map((c) => (
+              <Card key={c.id} style={{ marginBottom: 12, padding: 16, cursor: "pointer" }}>
+                <div onClick={() => openCoachClient(c.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ ...displayStyle, fontSize: 17 }}>{c.name}</div>
+                  <span style={{ color: T.accent, fontWeight: 800 }}>Open →</span>
+                </div>
+              </Card>
+            ))
+          )}
+        </div>,
+        { wide: true }
+      );
+
+    const p = coachClient.profile;
+    const week = coachClient.plan.weeks[weekIdx];
+    const day = week.days[Math.min(dayIdx, week.days.length - 1)];
+    const progDone = coachClient.progress.week >= NUM_WEEKS;
+
+    return shell(
+      <div>
+        <button onClick={() => setCoachClient(null)}
+          style={{ background: "none", border: "none", color: T.sub, fontFamily: fontStack, fontSize: 13, cursor: "pointer", marginBottom: 10, textDecoration: "underline" }}>
+          ← All clients
+        </button>
+        <div style={{ ...displayStyle, fontSize: 28, marginBottom: 4 }}>{p.name}</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.accentDark, marginBottom: 14 }}>
+          {progDone ? "🏆 Finished the 5-week program" : `Next up for them: Week ${coachClient.progress.week + 1}, workout ${coachClient.progress.day + 1} of ${p.frequency}`}
+        </div>
+
+        <Card style={{ marginBottom: 16, padding: 18 }}>
+          <SectionLabel>Profile</SectionLabel>
+          <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+            <strong>Goals:</strong> {p.goals}<br />
+            <strong>Frequency:</strong> {p.frequency}×/week → {p.frequency} workout slots per week<br />
+            <strong>Equipment:</strong> {p.facilities.join(", ")}<br />
+            <strong>PIN:</strong> {p.pin ? p.pin : "not set yet"}{" "}
+            {p.pin && (
+              <button onClick={resetClientPin} style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontWeight: 700, fontSize: 13, textDecoration: "underline" }}>
+                reset (they'll pick a new one)
+              </button>
+            )}
+          </div>
+        </Card>
+
+        <Card style={{ marginBottom: 16, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            <SectionLabel>5-week plan builder</SectionLabel>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn small kind="accent" onClick={aiSuggestWeek} disabled={aiBusy}>
+                {aiBusy ? "🤖 Thinking…" : "✨ AI suggest this week"}
+              </Btn>
+              {weekIdx < NUM_WEEKS - 1 && (
+                <Btn small kind="ghost" onClick={copyWeekForward} disabled={busy}>Copy → week {weekIdx + 2}</Btn>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {Array.from({ length: NUM_WEEKS }, (_, wi) => (
+              <Tab key={wi} active={wi === weekIdx} onClick={() => { setWeekIdx(wi); setDayIdx(0); }}>
+                Week {wi + 1}
+              </Tab>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid " + T.line }}>
+            {week.days.map((dy, di) => (
+              <Tab key={di} active={di === dayIdx} onClick={() => setDayIdx(di)}>
+                {di + 1}. {dy.title} {dy.exercises.length ? `(${dy.exercises.length})` : "·"}
+              </Tab>
+            ))}
+          </div>
+
+          <Field label="Workout name">
+            <input style={{ ...inputStyle, padding: "8px 12px", fontSize: 14 }} value={day.title}
+              onChange={(e) => renameDay(e.target.value)}
+              onBlur={() => saveDay(weekIdx, dayIdx, day.title, day.exercises)} />
+          </Field>
+
+          {day.exercises.length === 0 && (
+            <p style={{ color: T.sub, fontSize: 14 }}>No exercises in this workout yet — add below or use ✨ AI suggest.</p>
+          )}
+          {day.exercises.map((ex, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid " + T.line }}>
+              <div style={{ fontSize: 14 }}>
+                <strong>{ex.name}</strong>{" "}
+                <span style={{ color: T.sub }}>
+                  {ex.sets && ex.reps ? `${ex.sets}×${ex.reps}` : ""}{ex.weight ? ` @ ${ex.weight}` : ""}{ex.rest ? ` · rest ${ex.rest}s` : ""}
+                </span>
+              </div>
+              <button onClick={() => removeExercise(i)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>
+                remove
+              </button>
+            </div>
+          ))}
+          {day.exercises.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800, color: T.sub }}>
+              ⏱ Estimated session: ~{estimateMinutes(day.exercises)} min
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginTop: 14 }}>
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Exercise" value={newEx.name} onChange={(e) => setNewEx({ ...newEx, name: e.target.value })} />
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Sets" value={newEx.sets} onChange={(e) => setNewEx({ ...newEx, sets: e.target.value })} />
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Reps" value={newEx.reps} onChange={(e) => setNewEx({ ...newEx, reps: e.target.value })} />
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Weight" value={newEx.weight} onChange={(e) => setNewEx({ ...newEx, weight: e.target.value })} />
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Rest (s)" value={newEx.rest} onChange={(e) => setNewEx({ ...newEx, rest: e.target.value.replace(/\D/g, "") })} />
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <Btn small kind="accent" onClick={addExercise}>+ Add exercise</Btn>
+          </div>
+        </Card>
+
+        <Card style={{ padding: 18 }}>
+          <SectionLabel>Session feedback ({(coachClient.logs || []).length})</SectionLabel>
+          {(coachClient.logs || []).length === 0 && (
+            <p style={{ color: T.sub, fontSize: 14, margin: 0 }}>No logged sessions yet.</p>
+          )}
+          {[...(coachClient.logs || [])].reverse().map((log, i) => (
+            <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid " + T.line, fontSize: 14 }}>
+              <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                {new Date(log.date).toLocaleString()}{log.week ? ` · Week ${log.week}, workout ${log.day}` : ""}
+              </div>
+              {log.sessionNote && <div style={{ marginBottom: 4 }}>"{log.sessionNote}"</div>}
+              {(log.entries || []).filter((c) => c.comment || c.weightUsed).map((c, j) => (
+                <div key={j} style={{ color: T.sub }}>
+                  · {c.exercise}: {c.weightUsed ? <strong style={{ color: T.accentDark }}>{c.weightUsed}</strong> : ""}{c.weightUsed && c.comment ? " — " : ""}{c.comment}
+                </div>
+              ))}
+            </div>
+          ))}
+        </Card>
+      </div>,
+      { wide: true }
+    );
+  }
+
+  return shell(<Card>Loading…</Card>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<PlanJinji />);
+</script>
+</body>
+</html>
