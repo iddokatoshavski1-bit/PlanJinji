@@ -144,7 +144,7 @@ async function fullClient(id, { includePin = false } = {}) {
       name: c.name,
       goals: c.goals,
       frequency: String(c.frequency),
-      facilities: JSON.parse(c.facilities),
+      facilities: safeFacilities(c.facilities),
       joined: c.joined,
       ...(includePin ? { pin: c.pin } : {}),
     },
@@ -154,6 +154,17 @@ async function fullClient(id, { includePin = false } = {}) {
     logs: await assembleLogs(id),
   };
 }
+function safeFacilities(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [String(parsed)];
+  } catch (e) {
+    // old-format plain text like "Full gym" — wrap it into an array
+    return String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+  }
+}
+
 
 async function replaceDay(clientId, week, day, title, exercises) {
   await q(
