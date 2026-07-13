@@ -9,15 +9,17 @@
 <style>
   * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
   body { margin: 0; }
+  @keyframes pj-pop { 0% { transform: scale(0.6) rotate(-4deg); opacity: 0; } 60% { transform: scale(1.08) rotate(1deg); opacity: 1; } 100% { transform: scale(1) rotate(-1deg); opacity: 1; } }
+  @keyframes pj-rise { 0% { transform: translateY(10px) scale(0.9); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
 </style>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
-const { useState } = React;
+<script type="text/babel" data-presets="env,react" data-type="module">
+const { useState, useEffect, useRef } = React;
 
 // ---------- API helper ----------
 async function api(path, { method = "GET", body, headers = {} } = {}) {
@@ -35,6 +37,7 @@ async function api(path, { method = "GET", body, headers = {} } = {}) {
 const T = {
   bg: "#F5F1EB", card: "#FFFFFF", ink: "#241A12", sub: "#6B5F53", line: "#E4DCD1",
   accent: "#D9641E", accentDark: "#B14E13", accentSoft: "#F9E9DC", good: "#2A7A4B",
+  bolt: "#F5C518",
 };
 const fontStack = "'Archivo', system-ui, sans-serif";
 const displayStyle = { fontFamily: fontStack, fontWeight: 800, letterSpacing: "-0.02em", textTransform: "uppercase" };
@@ -44,17 +47,39 @@ const FACILITY_OPTIONS = [
 ];
 const isValidPin = (p) => /^\d{4}$/.test(p);
 const NUM_WEEKS = 5;
+const MUSIC_SRC = "/music/JinjiPlan.mp3"; // file lives in public/music/ — no space in the name!
 
-// ---------- mascots ----------
+// ---------- phrases ----------
 const PHRASES = {
   go: ["The bar won't lift itself!", "Are you a lifter or a licker?!", "Sweat is just fat crying!", "Gravity called. It's scared.", "Lift heavy, nap heavier!", "Excuses don't burn calories!", "Make the dumbbells nervous!"],
   done: ["You made the dumbbells cry!", "Protein shake: EARNED.", "Certified beast. Paperwork pending.", "Muscles +1. Excuses 0.", "The floor felt that one!", "Go walk like a hero now!"],
   wait: ["Coach is cooking something spicy!", "Plan loading… flex while you wait!", "Big gains incoming!"],
 };
 
+const PRAISE = [
+  "Good job! 💪", "That's the way to do it!", "Beast mode: ON! 🔥", "Logged like a pro!",
+  "Strong move, champion!", "The plates are shaking!", "Coach is gonna love this!",
+  "Another brick in the muscle wall!", "That set didn't stand a chance!", "Iron: defeated. ⚔️",
+];
+
+const LEVELUP_PHRASES = [
+  "One step closer to unstoppable! 🚀",
+  "Soon they'll write legends about you! 📜",
+  "The strongest version of you is loading… 💪",
+  "Gravity just filed a complaint. ⚖️",
+  "Keep this up and the dumbbells will unionize! 🏋️",
+  "You're built different now. 🔩",
+  "From rookie to wrecking machine! 🏗️",
+  "The iron fears you now. ⚔️",
+];
+
+// ---------- mascots (cool crew) ----------
 const MASCOTS = [
+  // 1) THUNDER FLEX — mohawk, shades, lightning bolts
   (key) => (
     <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M16 18 L30 18 L23 34 L34 34 L12 62 L21 42 L10 42 Z" fill={T.bolt} stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M134 14 L145 14 L139 27 L148 27 L128 50 L135 34 L126 34 Z" fill={T.bolt} stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
       <path d="M42 100 Q18 92 22 66 Q24 50 36 46" fill="none" stroke={T.ink} strokeWidth="15" strokeLinecap="round" />
       <path d="M42 100 Q18 92 22 66 Q24 50 36 46" fill="none" stroke="#F2B48C" strokeWidth="10" strokeLinecap="round" />
       <circle cx="26" cy="60" r="12" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
@@ -63,55 +88,180 @@ const MASCOTS = [
       <path d="M108 100 Q132 92 128 66 Q126 50 114 46" fill="none" stroke="#F2B48C" strokeWidth="10" strokeLinecap="round" />
       <circle cx="124" cy="60" r="12" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
       <circle cx="113" cy="45" r="8" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
-      <path d="M38 128 Q36 90 50 86 Q60 82 75 82 Q90 82 100 86 Q114 90 112 128 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
-      <path d="M60 96 Q75 104 90 96" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.6" />
-      <path d="M75 100 L75 120" stroke={T.ink} strokeWidth="2.5" opacity="0.4" />
+      <path d="M38 128 Q36 90 50 86 Q60 82 75 82 Q90 82 100 86 Q114 90 112 128 Z" fill={T.ink} stroke={T.ink} strokeWidth="3" />
+      <path d="M55 90 L62 128 M95 90 L88 128" stroke="#F2B48C" strokeWidth="9" strokeLinecap="round" />
+      <path d="M60 100 L75 96 L90 100 L88 112 L75 108 L62 112 Z" fill={T.bolt} stroke={T.ink} strokeWidth="2" />
       <rect x="66" y="66" width="18" height="14" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
       <circle cx="75" cy="50" r="24" fill="#F2B48C" stroke={T.ink} strokeWidth="3" />
-      <path d="M51 48 Q47 20 75 20 Q103 20 99 48 Q97 34 87 33 Q91 27 81 26 Q71 23 63 31 Q53 31 51 41 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
-      <circle cx="67" cy="50" r="2.6" fill={T.ink} />
-      <circle cx="83" cy="50" r="2.6" fill={T.ink} />
-      <path d="M66 59 Q75 68 84 59" fill="none" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
-      <circle cx="61" cy="57" r="3.2" fill="#F09A6B" opacity="0.8" />
-      <circle cx="89" cy="57" r="3.2" fill="#F09A6B" opacity="0.8" />
-      <circle cx="70" cy="56" r="1" fill="#C4763F" /><circle cx="75" cy="57" r="1" fill="#C4763F" /><circle cx="80" cy="56" r="1" fill="#C4763F" />
+      <path d="M62 30 L66 14 L70 28 L75 10 L80 28 L84 14 L88 30 Q82 24 75 24 Q68 24 62 30 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
+      <path d="M54 46 L96 46" stroke={T.ink} strokeWidth="3" />
+      <rect x="58" y="44" width="14" height="10" rx="3" fill={T.ink} />
+      <rect x="78" y="44" width="14" height="10" rx="3" fill={T.ink} />
+      <path d="M60 47 L66 47" stroke="#7DE0FF" strokeWidth="2" strokeLinecap="round" />
+      <path d="M80 47 L86 47" stroke="#7DE0FF" strokeWidth="2" strokeLinecap="round" />
+      <path d="M64 61 Q75 70 86 61" fill="none" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
+      <path d="M70 64 L80 64" stroke="#fff" strokeWidth="3" strokeLinecap="round" />
     </svg>
   ),
+  // 2) KONG PRESS — gorilla bending the bar overhead
   (key) => (
     <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
-      <path d="M20 34 Q75 16 130 34" fill="none" stroke={T.ink} strokeWidth="5" strokeLinecap="round" />
-      <rect x="12" y="20" width="14" height="30" rx="5" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
-      <rect x="124" y="20" width="14" height="30" rx="5" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
-      <path d="M50 32 Q52 48 60 62" fill="none" stroke="#C88A5A" strokeWidth="11" strokeLinecap="round" />
-      <path d="M100 32 Q98 48 90 62" fill="none" stroke="#C88A5A" strokeWidth="11" strokeLinecap="round" />
-      <circle cx="56" cy="44" r="8" fill="#C88A5A" stroke={T.ink} strokeWidth="2.5" />
-      <circle cx="94" cy="44" r="8" fill="#C88A5A" stroke={T.ink} strokeWidth="2.5" />
-      <circle cx="75" cy="56" r="17" fill="#C88A5A" stroke={T.ink} strokeWidth="3" />
-      <path d="M59 54 Q58 38 75 38 Q92 38 91 54 Q87 44 75 44 Q63 44 59 54 Z" fill={T.ink} />
-      <path d="M90 50 Q106 48 104 68 Q99 56 88 56 Z" fill={T.ink} />
-      <circle cx="69" cy="56" r="2.2" fill={T.ink} />
-      <circle cx="81" cy="56" r="2.2" fill={T.ink} />
-      <path d="M69 64 Q75 69 81 64" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M56 128 Q52 80 65 78 Q75 76 85 78 Q98 80 94 128 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
-      <path d="M64 92 Q75 98 86 92" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.6" />
-      <path d="M60 112 L90 112" stroke={T.ink} strokeWidth="3" />
+      <path d="M18 36 Q75 14 132 36" fill="none" stroke={T.ink} strokeWidth="5" strokeLinecap="round" />
+      <rect x="8" y="22" width="16" height="34" rx="6" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <rect x="126" y="22" width="16" height="34" rx="6" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <rect x="24" y="28" width="8" height="22" rx="4" fill={T.accent} stroke={T.ink} strokeWidth="2.5" />
+      <rect x="118" y="28" width="8" height="22" rx="4" fill={T.accent} stroke={T.ink} strokeWidth="2.5" />
+      <path d="M44 20 q2 4 0 6 q-2 -2 0 -6 Z" fill="#7DE0FF" stroke={T.ink} strokeWidth="1.5" />
+      <path d="M106 18 q2 4 0 6 q-2 -2 0 -6 Z" fill="#7DE0FF" stroke={T.ink} strokeWidth="1.5" />
+      <path d="M50 34 Q52 50 60 62" fill="none" stroke="#4A423B" strokeWidth="13" strokeLinecap="round" />
+      <path d="M100 34 Q98 50 90 62" fill="none" stroke="#4A423B" strokeWidth="13" strokeLinecap="round" />
+      <circle cx="55" cy="46" r="9" fill="#4A423B" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="95" cy="46" r="9" fill="#4A423B" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="75" cy="58" r="18" fill="#4A423B" stroke={T.ink} strokeWidth="3" />
+      <path d="M64 54 Q64 44 75 44 Q86 44 86 54 Q82 48 75 48 Q68 48 64 54 Z" fill={T.ink} />
+      <path d="M58 50 Q75 42 92 50 L92 56 Q75 48 58 56 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M90 52 L102 46 L100 58 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <ellipse cx="75" cy="64" rx="10" ry="8" fill="#8C7B6B" stroke={T.ink} strokeWidth="2" />
+      <circle cx="69" cy="58" r="2.4" fill={T.ink} />
+      <circle cx="81" cy="58" r="2.4" fill={T.ink} />
+      <path d="M70 67 Q75 71 80 67" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="71" cy="63" r="1.4" fill={T.ink} />
+      <circle cx="79" cy="63" r="1.4" fill={T.ink} />
+      <path d="M52 128 Q48 82 62 78 Q75 74 88 78 Q102 82 98 128 Z" fill="#4A423B" stroke={T.ink} strokeWidth="3" />
+      <path d="M62 92 Q75 100 88 92" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.7" />
+      <path d="M66 106 Q75 112 84 106" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.7" />
+      <path d="M62 82 Q75 90 88 82 L86 96 Q75 90 64 96 Z" fill="#C9BBA8" stroke={T.ink} strokeWidth="2" />
     </svg>
   ),
+  // 3) IRON BULLDOG — spiked collar, dumbbell in jaws, flames
   (key) => (
-    <svg key={key} viewBox="0 0 140 132" width="105" height="99" aria-hidden="true">
-      <circle cx="68" cy="40" r="17" fill="#8C5A3A" stroke={T.ink} strokeWidth="3" />
-      <path d="M52 38 Q51 23 68 23 Q85 23 84 38 Q79 29 68 29 Q57 29 52 38 Z" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
-      <circle cx="68" cy="18" r="8" fill="#D93B1F" stroke={T.ink} strokeWidth="2.5" />
-      <circle cx="62" cy="40" r="2.2" fill={T.ink} />
-      <circle cx="74" cy="40" r="2.2" fill={T.ink} />
-      <path d="M62 48 Q68 53 74 48" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M54 62 Q42 84 34 92 Q28 102 42 104 L52 94 Q62 88 66 82" fill="none" stroke={T.ink} strokeWidth="13" strokeLinecap="round" />
-      <path d="M82 62 Q94 84 102 92 Q108 102 94 104 L84 94 Q74 88 70 82" fill="none" stroke={T.ink} strokeWidth="13" strokeLinecap="round" />
-      <path d="M52 58 Q68 96 84 58 Q84 55 68 55 Q52 55 52 58 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
-      <path d="M56 62 L64 92 M80 62 L72 92" stroke="#8C5A3A" strokeWidth="8" strokeLinecap="round" />
-      <path d="M58 98 Q58 88 68 88 Q78 88 78 98" fill="none" stroke={T.ink} strokeWidth="5" />
-      <circle cx="68" cy="110" r="14" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
-      <text x="68" y="115" textAnchor="middle" fontFamily={fontStack} fontWeight="900" fontSize="11" fill="#fff">32</text>
+    <svg key={key} viewBox="0 0 150 132" width="110" height="97" aria-hidden="true">
+      <path d="M20 116 Q16 102 26 96 Q22 108 32 106 Q26 118 20 116 Z" fill={T.accent} stroke={T.ink} strokeWidth="2" />
+      <path d="M128 114 Q124 100 134 94 Q130 106 140 104 Q134 116 128 114 Z" fill={T.accent} stroke={T.ink} strokeWidth="2" />
+      <path d="M44 128 Q38 92 54 86 Q64 82 75 82 Q86 82 96 86 Q112 92 106 128 Z" fill="#B9AA96" stroke={T.ink} strokeWidth="3" />
+      <path d="M58 96 Q75 106 92 96" fill="none" stroke={T.ink} strokeWidth="2.5" opacity="0.6" />
+      <rect x="52" y="112" width="14" height="18" rx="6" fill="#B9AA96" stroke={T.ink} strokeWidth="3" />
+      <rect x="84" y="112" width="14" height="18" rx="6" fill="#B9AA96" stroke={T.ink} strokeWidth="3" />
+      <path d="M42 52 Q42 24 75 24 Q108 24 108 52 Q108 76 75 76 Q42 76 42 52 Z" fill="#CFC0AB" stroke={T.ink} strokeWidth="3" />
+      <path d="M84 30 Q104 30 104 48 Q104 58 94 58 Q84 54 84 44 Z" fill="#6B5A48" stroke={T.ink} strokeWidth="2" />
+      <path d="M46 34 Q40 20 52 20 Q56 26 54 34 Z" fill="#6B5A48" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M104 34 Q110 20 98 20 Q94 26 96 34 Z" fill="#6B5A48" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M56 40 L68 44" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
+      <path d="M94 40 L82 44" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
+      <circle cx="64" cy="48" r="2.8" fill={T.ink} />
+      <circle cx="86" cy="48" r="2.8" fill={T.ink} />
+      <ellipse cx="75" cy="62" rx="14" ry="10" fill="#EFE3D0" stroke={T.ink} strokeWidth="2.5" />
+      <circle cx="75" cy="57" r="3" fill={T.ink} />
+      <path d="M40 66 L110 66" stroke={T.ink} strokeWidth="4" strokeLinecap="round" />
+      <rect x="30" y="58" width="12" height="16" rx="4" fill={T.accentDark} stroke={T.ink} strokeWidth="2.5" />
+      <rect x="108" y="58" width="12" height="16" rx="4" fill={T.accentDark} stroke={T.ink} strokeWidth="2.5" />
+      <path d="M66 68 L70 63 M75 69 L75 63 M84 68 L80 63" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M50 78 Q75 88 100 78 L100 86 Q75 96 50 86 Z" fill={T.ink} />
+      <circle cx="58" cy="84" r="3" fill={T.bolt} stroke={T.ink} strokeWidth="1.5" />
+      <circle cx="75" cy="88" r="3" fill={T.bolt} stroke={T.ink} strokeWidth="1.5" />
+      <circle cx="92" cy="84" r="3" fill={T.bolt} stroke={T.ink} strokeWidth="1.5" />
+    </svg>
+  ),
+  // 4) COOL CAT — shades, curling a dumbbell
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M108 120 Q140 110 132 78 Q128 66 118 70" fill="none" stroke={T.ink} strokeWidth="10" strokeLinecap="round" />
+      <path d="M108 120 Q140 110 132 78 Q128 66 118 70" fill="none" stroke="#9A8B7A" strokeWidth="6" strokeLinecap="round" />
+      <path d="M48 126 Q44 92 60 88 Q75 84 90 88 Q106 92 102 126 Z" fill="#B5A797" stroke={T.ink} strokeWidth="3" />
+      <path d="M60 96 Q46 90 44 76" fill="none" stroke="#B5A797" strokeWidth="10" strokeLinecap="round" />
+      <circle cx="44" cy="72" r="8" fill="#B5A797" stroke={T.ink} strokeWidth="2.5" />
+      <rect x="32" y="60" width="8" height="14" rx="3" fill={T.accentDark} stroke={T.ink} strokeWidth="2" />
+      <rect x="48" y="60" width="8" height="14" rx="3" fill={T.accentDark} stroke={T.ink} strokeWidth="2" />
+      <rect x="40" y="65" width="8" height="4" fill={T.ink} />
+      <path d="M50 30 L58 44 Q75 38 92 44 L100 30 L96 52 Q100 66 75 66 Q50 66 54 52 Z" fill="#C9BBAA" stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
+      <path d="M55 34 L61 44 L52 44 Z" fill={T.accent} />
+      <path d="M95 34 L89 44 L98 44 Z" fill={T.accent} />
+      <rect x="56" y="48" width="16" height="10" rx="3" fill={T.ink} />
+      <rect x="78" y="48" width="16" height="10" rx="3" fill={T.ink} />
+      <path d="M72 52 L78 52" stroke={T.ink} strokeWidth="2" />
+      <path d="M58 51 L64 51" stroke="#7DE0FF" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M72 60 L78 60 L75 63 Z" fill={T.accent} />
+      <path d="M75 63 Q70 66 66 63 M75 63 Q80 66 84 63" fill="none" stroke={T.ink} strokeWidth="1.6" />
+      <path d="M60 60 L44 58 M60 63 L46 64 M90 60 L106 58 M90 63 L104 64" stroke={T.ink} strokeWidth="1.4" />
+    </svg>
+  ),
+  // 5) BOXER KANGAROO — red gloves, ready to spar
+  (key) => (
+    <svg key={key} viewBox="0 0 150 132" width="110" height="97" aria-hidden="true">
+      <path d="M96 122 Q128 122 128 100 Q128 90 114 92" fill="#C08A4E" stroke={T.ink} strokeWidth="3" />
+      <path d="M62 118 L52 128 L74 128" fill="#C08A4E" stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
+      <path d="M84 118 L74 128 L96 128" fill="#C08A4E" stroke={T.ink} strokeWidth="3" strokeLinejoin="round" />
+      <path d="M56 120 Q50 84 66 78 Q75 74 84 78 Q100 84 94 120 Z" fill="#C79A63" stroke={T.ink} strokeWidth="3" />
+      <path d="M64 88 Q75 96 86 88 L84 104 Q75 98 66 104 Z" fill="#E4CBA3" stroke={T.ink} strokeWidth="2" />
+      <circle cx="46" cy="70" r="12" fill="#D93B1F" stroke={T.ink} strokeWidth="3" />
+      <path d="M52 68 Q60 72 64 80" fill="none" stroke="#C79A63" strokeWidth="8" strokeLinecap="round" />
+      <circle cx="104" cy="58" r="12" fill="#D93B1F" stroke={T.ink} strokeWidth="3" />
+      <path d="M98 60 Q90 66 86 76" fill="none" stroke="#C79A63" strokeWidth="8" strokeLinecap="round" />
+      <path d="M60 58 Q58 34 75 34 Q92 34 90 58 Q84 66 75 66 Q66 66 60 58 Z" fill="#C79A63" stroke={T.ink} strokeWidth="3" />
+      <path d="M62 36 Q56 16 66 20 Q68 28 70 36 Z" fill="#C79A63" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M88 36 Q94 16 84 20 Q82 28 80 36 Z" fill="#C79A63" stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <ellipse cx="75" cy="56" rx="9" ry="7" fill="#E4CBA3" stroke={T.ink} strokeWidth="2" />
+      <circle cx="75" cy="52" r="2.5" fill={T.ink} />
+      <circle cx="69" cy="47" r="2.2" fill={T.ink} />
+      <circle cx="81" cy="47" r="2.2" fill={T.ink} />
+      <path d="M60 42 Q75 36 90 42 L90 47 Q75 41 60 47 Z" fill={T.accent} stroke={T.ink} strokeWidth="2" />
+    </svg>
+  ),
+  // 6) STRONG ELEPHANT — pressing a barbell with its trunk
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M30 26 L120 26" stroke={T.ink} strokeWidth="5" strokeLinecap="round" />
+      <rect x="20" y="16" width="12" height="22" rx="4" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <rect x="118" y="16" width="12" height="22" rx="4" fill={T.accentDark} stroke={T.ink} strokeWidth="3" />
+      <path d="M75 60 Q70 44 75 30" fill="none" stroke="#8FA0AE" strokeWidth="11" strokeLinecap="round" />
+      <path d="M40 124 Q36 80 58 74 Q75 70 92 74 Q114 80 110 124 Z" fill="#9BAAB8" stroke={T.ink} strokeWidth="3" />
+      <ellipse cx="48" cy="60" rx="14" ry="18" fill="#8FA0AE" stroke={T.ink} strokeWidth="3" />
+      <ellipse cx="102" cy="60" rx="14" ry="18" fill="#8FA0AE" stroke={T.ink} strokeWidth="3" />
+      <circle cx="75" cy="62" r="26" fill="#9BAAB8" stroke={T.ink} strokeWidth="3" />
+      <path d="M75 60 Q70 44 75 30" fill="none" stroke="#8FA0AE" strokeWidth="11" strokeLinecap="round" />
+      <circle cx="66" cy="58" r="2.6" fill={T.ink} />
+      <circle cx="84" cy="58" r="2.6" fill={T.ink} />
+      <path d="M60 52 L70 55 M90 52 L80 55" stroke={T.ink} strokeWidth="3" strokeLinecap="round" />
+      <path d="M64 82 Q60 92 56 90 M86 82 Q90 92 94 90" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
+      <path d="M52 46 Q75 38 98 46 L98 51 Q75 43 52 51 Z" fill={T.accent} stroke={T.ink} strokeWidth="2" />
+    </svg>
+  ),
+  // 7) SLAM DUNK — baller mid-dunk
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <circle cx="112" cy="24" r="13" fill="#E08A3C" stroke={T.ink} strokeWidth="3" />
+      <path d="M99 24 L125 24 M112 11 L112 37 M103 15 Q112 24 103 33 M121 15 Q112 24 121 33" stroke={T.ink} strokeWidth="1.6" fill="none" />
+      <path d="M84 70 Q100 52 108 34" fill="none" stroke="#E8B98C" strokeWidth="10" strokeLinecap="round" />
+      <path d="M60 74 Q44 78 40 92" fill="none" stroke="#E8B98C" strokeWidth="10" strokeLinecap="round" />
+      <path d="M50 126 Q46 84 62 80 Q75 76 88 80 Q104 84 100 126 Z" fill={T.accent} stroke={T.ink} strokeWidth="3" />
+      <text x="75" y="110" textAnchor="middle" fontFamily={fontStack} fontWeight="900" fontSize="20" fill="#fff">23</text>
+      <circle cx="72" cy="60" r="18" fill="#E8B98C" stroke={T.ink} strokeWidth="3" />
+      <path d="M55 54 Q72 46 89 54 L89 60 Q72 52 55 60 Z" fill={T.ink} />
+      <circle cx="67" cy="62" r="2.4" fill={T.ink} />
+      <circle cx="78" cy="62" r="2.4" fill={T.ink} />
+      <path d="M67 70 Q72 74 78 70" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  ),
+  // 8) IRON PIRATE — bandana, eyepatch, hook + dumbbell
+  (key) => (
+    <svg key={key} viewBox="0 0 150 130" width="110" height="95" aria-hidden="true">
+      <path d="M60 96 Q44 92 40 78" fill="none" stroke="#E8B98C" strokeWidth="10" strokeLinecap="round" />
+      <rect x="30" y="66" width="9" height="16" rx="3" fill={T.ink} />
+      <rect x="42" y="66" width="9" height="16" rx="3" fill={T.ink} />
+      <rect x="37" y="71" width="8" height="6" fill={T.ink} />
+      <path d="M90 92 Q104 88 108 76" fill="none" stroke="#7A6A58" strokeWidth="10" strokeLinecap="round" />
+      <path d="M108 74 Q116 74 114 84 Q112 90 106 86" fill="none" stroke="#B9BEC4" strokeWidth="4" strokeLinecap="round" />
+      <path d="M50 126 Q46 88 64 82 Q75 78 86 82 Q104 88 100 126 Z" fill="#fff" stroke={T.ink} strokeWidth="3" />
+      <path d="M52 94 L98 94 M52 106 L98 106 M52 118 L98 118" stroke="#D93B1F" strokeWidth="6" />
+      <circle cx="74" cy="58" r="19" fill="#E8B98C" stroke={T.ink} strokeWidth="3" />
+      <path d="M54 48 Q74 40 94 48 L94 54 Q74 46 54 54 Z" fill={T.accent} stroke={T.ink} strokeWidth="2.5" />
+      <path d="M54 50 Q74 38 94 50 L94 44 Q74 34 54 44 Z" fill={T.accent} stroke={T.ink} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M54 50 L44 46 L48 56 Z" fill={T.accent} stroke={T.ink} strokeWidth="2" />
+      <path d="M64 52 L58 60 Q64 66 70 60 Z" fill={T.ink} />
+      <path d="M58 60 L54 48" stroke={T.ink} strokeWidth="2" />
+      <circle cx="82" cy="60" r="2.6" fill={T.ink} />
+      <path d="M68 68 Q76 74 84 68" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="92" cy="66" r="3" fill="none" stroke={T.bolt} strokeWidth="2.5" />
     </svg>
   ),
 ];
@@ -140,21 +290,137 @@ function Mascot({ mood = "go" }) {
   );
 }
 
-// ---------- misc helpers ----------
+// small praise bubble shown after an athlete saves a weight
+function PraiseBubble({ text }) {
+  return (
+    <div style={{
+      marginTop: 10, display: "inline-block", background: "#FFF8D8", border: "2.5px solid " + T.ink,
+      borderRadius: 12, padding: "7px 14px", fontFamily: fontStack, fontWeight: 800, fontSize: 14,
+      color: T.ink, boxShadow: "3px 3px 0 " + T.bolt, animation: "pj-pop .35s ease",
+    }}>
+      {text}
+    </div>
+  );
+}
+
+// ---------- XP / level helpers (doubling curve) ----------
+// Each level needs 2× the previous: L1→L2 = 250, L2→L3 = 500, L3→L4 = 1000, ...
+// Cumulative XP to *reach* level n = 250 * (2^(n-1) - 1)
+function getXP(logs) {
+  return (logs || []).length * 250;
+}
+
+function getLevel(xp) {
+  return Math.floor(Math.log2((xp / 250) + 1)) + 1;
+}
+
+function levelInfo(xp) {
+  const level = getLevel(xp);
+  const start = 250 * (Math.pow(2, level - 1) - 1); // xp at the start of this level
+  const need = 250 * Math.pow(2, level - 1);         // xp needed to reach the next level
+  const into = xp - start;                            // xp earned inside this level
+  return { level, into, need };
+}
+
+function getTitle(level) {
+  const titles = ["Rookie", "Gym Rat", "Iron Wolf", "Barbarian", "Titan", "Legend"];
+  return level >= 7 ? "Unstoppable" : (titles[level - 1] || "Unstoppable");
+}
+
+// ---------- per-set encoding ----------
+// Per-set targets live INSIDE the standard reps/weight string fields, comma-separated:
+//   reps = "10,8,6,4"   weight = "40,50,60,70"
+function splitList(str) {
+  return String(str || "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+}
+
+function getSetDetails(ex) {
+  if (Array.isArray(ex.setDetails) && ex.setDetails.length > 0) return ex.setDetails;
+  const repsArr = splitList(ex.reps);
+  const wArr = splitList(ex.weight);
+  const n = Math.max(1, parseInt(ex.sets) || repsArr.length || wArr.length || 3);
+  return Array.from({ length: n }, (_, j) => ({
+    reps: repsArr[j] !== undefined ? repsArr[j] : (repsArr.length ? repsArr[repsArr.length - 1] : ""),
+    weight: wArr[j] !== undefined ? wArr[j] : (wArr.length ? wArr[wArr.length - 1] : ""),
+  }));
+}
+
+function detailsToFields(details) {
+  return {
+    sets: String(details.length),
+    reps: details.map((s) => s.reps || "").join(","),
+    weight: details.map((s) => s.weight || "").join(","),
+  };
+}
+
+// ---------- metcon / block encoding ----------
+// A block is a single exercise entry with sets === "block".
+//   name   = block title (e.g. "Metcon")
+//   weight = scheme (e.g. "AMRAP 12 min" / "21-15-9" / "3 rounds for time")
+//   reps   = movements joined by " | " (e.g. "Thrusters 21 @ 40kg | Pull-ups 21")
+//   rest   = rest seconds after the block
+function isBlock(ex) {
+  return String(ex.sets || "").toLowerCase() === "block";
+}
+function decodeBlock(ex) {
+  return {
+    title: ex.name || "Metcon",
+    scheme: ex.weight || "",
+    movements: String(ex.reps || "").split("|").map((s) => s.trim()).filter(Boolean),
+    rest: ex.rest || "60",
+  };
+}
+function encodeBlock(b) {
+  return {
+    name: (b.title || "Metcon").trim(),
+    sets: "block",
+    weight: (b.scheme || "").trim(),
+    reps: (b.movements || []).join(" | "),
+    rest: b.rest || "60",
+  };
+}
+function blockMinutes(ex) {
+  const scheme = String(ex.weight || "");
+  const m = scheme.match(/(\d+)\s*min/i);
+  if (m) return parseInt(m[1]);
+  const movs = decodeBlock(ex).movements.length || 3;
+  const rMatch = scheme.match(/(\d+)\s*round/i);
+  const rounds = rMatch ? parseInt(rMatch[1]) : 3;
+  return Math.max(6, Math.round(movs * rounds * 0.8));
+}
+
 function estimateMinutes(exercises) {
   let sec = 0;
   for (const ex of exercises) {
-    const sets = parseInt(ex.sets) || 3;
+    if (isBlock(ex)) {
+      sec += blockMinutes(ex) * 60 + (parseInt(ex.rest) || 60);
+      continue;
+    }
+    const sets = getSetDetails(ex).length;
     const rest = parseInt(ex.rest) || 60;
     sec += sets * (45 + rest);
   }
   return Math.max(5, Math.round(sec / 60));
 }
 
+// rest seconds → human string in minutes ("45s", "1:30 min", "2 min")
+function formatRest(restSec) {
+  const s = parseInt(restSec) || 0;
+  if (!s) return "";
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem === 0 ? m + " min" : m + ":" + String(rem).padStart(2, "0") + " min";
+}
+
+// latest logged result for an exercise, matched by name (case-insensitive)
 function lastWeightFor(logs, exName) {
+  const target = String(exName || "").trim().toLowerCase();
   for (let i = (logs || []).length - 1; i >= 0; i--) {
-    const hit = (logs[i].entries || []).find((e) => e.exercise === exName && e.weightUsed);
-    if (hit) return { weight: hit.weightUsed, date: logs[i].date };
+    const hit = (logs[i].entries || []).find(
+      (e) => String(e.exercise || "").trim().toLowerCase() === target && e.weightUsed
+    );
+    if (hit) return { weight: hit.weightUsed, date: logs[i].date, comment: hit.comment || "" };
   }
   return null;
 }
@@ -208,6 +474,7 @@ const inputStyle = {
   padding: "11px 14px", fontSize: 15, fontFamily: fontStack, color: T.ink, background: "#fff", outline: "none",
 };
 const pinStyle = { ...inputStyle, letterSpacing: "0.4em", fontWeight: 800, fontSize: 20, textAlign: "center" };
+const smallInput = { ...inputStyle, fontSize: 14, padding: "8px 10px" };
 
 function Card({ children, style }) {
   return (
@@ -245,7 +512,7 @@ function PlanJinji() {
   const [nameInput, setNameInput] = useState("");
   const [clientId, setClientId] = useState(null);
   const [client, setClient] = useState(null);
-  const [clientPin, setClientPin] = useState("");     // verified PIN kept for API calls
+  const [clientPin, setClientPin] = useState("");
   const [clientPinInput, setClientPinInput] = useState("");
   const [needsPinSetup, setNeedsPinSetup] = useState(false);
   const [firstName, setFirstName] = useState("");
@@ -257,28 +524,122 @@ function PlanJinji() {
 
   const [comments, setComments] = useState({});
   const [weightsUsed, setWeightsUsed] = useState({});
+  const [savedExercises, setSavedExercises] = useState({});
+  const [praise, setPraise] = useState({});
   const [sessionNote, setSessionNote] = useState("");
   const [saved, setSaved] = useState(false);
+  const [earnedXP, setEarnedXP] = useState(0);
+  const [leveledUpTo, setLeveledUpTo] = useState(0);
+  const [levelMsg, setLevelMsg] = useState("");
+  const [selectedDay, setSelectedDay] = useState(0);
+  const [selectedWeek, setSelectedWeek] = useState(0);
 
   const [pinInput, setPinInput] = useState("");
-  const [coachPin, setCoachPin] = useState("");       // verified coach PIN for API calls
+  const [coachPin, setCoachPin] = useState("");
   const [clientList, setClientList] = useState([]);
   const [coachClient, setCoachClient] = useState(null);
   const [weekIdx, setWeekIdx] = useState(0);
   const [dayIdx, setDayIdx] = useState(0);
+  const [expandedEx, setExpandedEx] = useState(null);
   const [newEx, setNewEx] = useState({ name: "", sets: "", reps: "", weight: "", rest: "" });
+  const [showBlockForm, setShowBlockForm] = useState(false);
+  const [newBlock, setNewBlock] = useState({ title: "", scheme: "", rest: "", movements: [""] });
 
   const clientHeaders = () => ({ "x-client-pin": clientPin });
   const coachHeaders = () => ({ "x-coach-pin": coachPin });
 
+  // ----- login-page music (starts only after the first click/keypress on the site) -----
+  const audioRef = useRef(null);
+  if (!audioRef.current) {
+    audioRef.current = new Audio(MUSIC_SRC);
+    audioRef.current.loop = true;
+    audioRef.current.volume = 0.35;
+  }
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (screen === "login") {
+      const kick = () => {
+        a.play().catch(() => {});
+        window.removeEventListener("pointerdown", kick);
+        window.removeEventListener("keydown", kick);
+      };
+      window.addEventListener("pointerdown", kick);
+      window.addEventListener("keydown", kick);
+      return () => {
+        window.removeEventListener("pointerdown", kick);
+        window.removeEventListener("keydown", kick);
+      };
+    } else {
+      a.pause();
+      a.currentTime = 0;
+    }
+  }, [screen]);
+
+  // restore session on load
+  useEffect(() => {
+    const savedSession = localStorage.getItem("pj-session");
+    if (!savedSession) return;
+    try {
+      const s = JSON.parse(savedSession);
+      const record = s.record;
+      setClient(record);
+      setClientPin(s.pin);
+      setClientId(record.id);
+      const w = Math.min(record.progress.week, NUM_WEEKS - 1);
+      setSelectedWeek(w);
+      setSelectedDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
+      setScreen("client");
+    } catch (e) {
+      localStorage.removeItem("pj-session");
+    }
+  }, []);
+
+  // restore per-exercise saved weights/comments for the *selected* week & day
+  useEffect(() => {
+    if (!client || screen !== "client") return;
+    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const weekDays = client.plan.weeks[w].days;
+    const d = Math.min(selectedDay, weekDays.length - 1);
+    const newWeights = {};
+    const newComments = {};
+    const newSaved = {};
+    weekDays[d].exercises.forEach((ex, i) => {
+      const savedEx = localStorage.getItem(`pj-exercise-${client.id}-${w}-${d}-${i}`);
+      if (savedEx) {
+        try {
+          const parsed = JSON.parse(savedEx);
+          newWeights[i] = Array.isArray(parsed.weights) ? parsed.weights : (parsed.weight ? [parsed.weight] : []);
+          newComments[i] = parsed.comment || "";
+          newSaved[i] = true;
+        } catch (e) { /* ignore corrupt entry */ }
+      }
+    });
+    setWeightsUsed(newWeights);
+    setComments(newComments);
+    setSavedExercises(newSaved);
+    setPraise({});
+  }, [client, selectedWeek, selectedDay, screen]);
+
+  function persistSession(record, pin) {
+    localStorage.setItem("pj-session", JSON.stringify({ record, pin }));
+  }
+
   function resetAll() {
+    localStorage.removeItem("pj-session");
     setScreen("login"); setNameInput(""); setPinInput(""); setClientPinInput(""); setNewPin("");
     setClientPin(""); setCoachPin(""); setError(""); setSaved(false); setClient(null); setCoachClient(null);
+    setLeveledUpTo(0);
   }
 
   function enterClientSpace(record, pin) {
-    setClient(record); setClientPin(pin);
-    setComments({}); setWeightsUsed({}); setSessionNote(""); setSaved(false);
+    setClient(record); setClientPin(pin); setClientId(record.id);
+    const w = Math.min(record.progress.week, NUM_WEEKS - 1);
+    setSelectedWeek(w);
+    setSelectedDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
+    setComments({}); setWeightsUsed({}); setSavedExercises({}); setPraise({}); setSessionNote("");
+    setSaved(false); setEarnedXP(0); setLeveledUpTo(0);
+    persistSession(record, pin);
     setScreen("client");
   }
 
@@ -299,7 +660,6 @@ function PlanJinji() {
     setBusy(false);
   }
 
-  // ----- client PIN -----
   async function handleClientPin() {
     setBusy(true); setError("");
     try {
@@ -313,7 +673,6 @@ function PlanJinji() {
     setBusy(false);
   }
 
-  // ----- onboarding -----
   function toggleFacility(f) {
     setFacilities((cur) => (cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f]));
   }
@@ -331,20 +690,68 @@ function PlanJinji() {
   }
 
   // ----- client session -----
+  function setWeightForSet(exIdx, setIdx, value) {
+    const cur = weightsUsed[exIdx] ? [...weightsUsed[exIdx]] : [];
+    cur[setIdx] = value;
+    setWeightsUsed({ ...weightsUsed, [exIdx]: cur });
+    setSavedExercises({ ...savedExercises, [exIdx]: false });
+  }
+
+  function saveExercise(i) {
+    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const weekDays = client.plan.weeks[w].days;
+    const d = Math.min(selectedDay, weekDays.length - 1);
+    localStorage.setItem(
+      `pj-exercise-${client.id}-${w}-${d}-${i}`,
+      JSON.stringify({ weights: weightsUsed[i] || [], comment: comments[i] || "" })
+    );
+    setSavedExercises({ ...savedExercises, [i]: true });
+    const msg = PRAISE[Math.floor(Math.random() * PRAISE.length)];
+    setPraise((p) => ({ ...p, [i]: msg }));
+    setTimeout(() => setPraise((p) => {
+      const copy = { ...p }; delete copy[i]; return copy;
+    }), 3500);
+  }
+
   async function handleFinishSession() {
     setBusy(true); setError("");
     try {
       const w = Math.min(client.progress.week, NUM_WEEKS - 1);
       const d = Math.min(client.progress.day, client.plan.weeks[w].days.length - 1);
       const exercises = client.plan.weeks[w].days[d].exercises;
+      const prevXp = getXP(client.logs);
+
       const record = await api(`/client/${clientId}/finish`, {
         method: "POST", headers: clientHeaders(),
         body: {
-          entries: exercises.map((ex, i) => ({ exercise: ex.name, weightUsed: weightsUsed[i] || "", comment: comments[i] || "" })),
+          entries: exercises.map((ex, i) => {
+            if (isBlock(ex)) {
+              const res = (weightsUsed[i] || [])[0] || "";
+              return { exercise: ex.name, weightUsed: res, comment: comments[i] || "" };
+            }
+            const details = getSetDetails(ex);
+            const ws = weightsUsed[i] || [];
+            const tokens = details
+              .map((s, j) => (ws[j] ? (s.reps ? `${s.reps}×${ws[j]}` : String(ws[j])) : null))
+              .filter(Boolean);
+            return { exercise: ex.name, weightUsed: tokens.join(" / "), comment: comments[i] || "" };
+          }),
           sessionNote,
         },
       });
+
       setClient(record);
+      persistSession(record, clientPin);
+      setEarnedXP(250);
+
+      // level-up check
+      const newXp = getXP(record.logs);
+      if (getLevel(newXp) > getLevel(prevXp)) {
+        setLeveledUpTo(getLevel(newXp));
+        setLevelMsg(LEVELUP_PHRASES[Math.floor(Math.random() * LEVELUP_PHRASES.length)]);
+      } else {
+        setLeveledUpTo(0);
+      }
       setSaved(true);
     } catch (e) { setError(e.message); }
     setBusy(false);
@@ -371,10 +778,20 @@ function PlanJinji() {
       setCoachClient(c);
       setWeekIdx(Math.min(c.progress.week, NUM_WEEKS - 1));
       setDayIdx(0);
+      setExpandedEx(null);
+      setShowBlockForm(false);
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
-
+  
+async function deleteClient(id, name) {
+  if (!window.confirm(`Delete ${name}? This permanently removes their plan, PIN, and every logged session. Can't be undone.`)) return;
+  try {
+    await api(`/coach/client/${id}`, { method: "DELETE", headers: coachHeaders() });
+    setClientList((list) => list.filter((c) => c.id !== id));
+    if (coachClient && coachClient.id === id) setCoachClient(null);
+  } catch (e) { setError(e.message); }
+}
   async function saveDay(w, d, title, exercises) {
     try {
       const c = await api(`/coach/client/${coachClient.id}/day`, {
@@ -393,17 +810,114 @@ function PlanJinji() {
   function addExercise() {
     if (!newEx.name.trim()) return;
     const day = currentDay();
-    saveDay(weekIdx, dayIdx, day.title, [...day.exercises, { ...newEx, name: newEx.name.trim(), rest: newEx.rest || "90" }]);
+    const setCount = Math.max(1, parseInt(newEx.sets) || 3);
+    const details = Array.from({ length: setCount }, () => ({ reps: newEx.reps || "", weight: newEx.weight || "" }));
+    const exercise = { name: newEx.name.trim(), rest: newEx.rest || "90", ...detailsToFields(details) };
+    saveDay(weekIdx, dayIdx, day.title, [...day.exercises, exercise]);
     setNewEx({ name: "", sets: "", reps: "", weight: "", rest: "" });
+  }
+
+  // ----- metcon / block builder -----
+  function addBlock() {
+    const title = newBlock.title.trim();
+    const movements = newBlock.movements.map((m) => m.trim()).filter(Boolean);
+    if (!title || movements.length === 0) return;
+    const day = currentDay();
+    const ex = encodeBlock({ title, scheme: newBlock.scheme.trim() || "For time", movements, rest: newBlock.rest || "60" });
+    saveDay(weekIdx, dayIdx, day.title, [...day.exercises, ex]);
+    setNewBlock({ title: "", scheme: "", rest: "", movements: [""] });
+    setShowBlockForm(false);
+  }
+  function newBlockMovement() {
+    setNewBlock((b) => ({ ...b, movements: [...b.movements, ""] }));
+  }
+  function setNewBlockMovement(idx, value) {
+    setNewBlock((b) => { const mv = [...b.movements]; mv[idx] = value; return { ...b, movements: mv }; });
+  }
+  function removeNewBlockMovement(idx) {
+    setNewBlock((b) => {
+      const mv = b.movements.filter((_, i) => i !== idx);
+      return { ...b, movements: mv.length ? mv : [""] };
+    });
+  }
+
+  // edit an existing block: text edits update local plan, persist on blur
+  function updateBlockLocal(exIdx, field, value, movIdx) {
+    const weeks = coachClient.plan.weeks.map((wk, wi) => {
+      if (wi !== weekIdx) return wk;
+      return {
+        days: wk.days.map((dy, di) => {
+          if (di !== dayIdx) return dy;
+          return {
+            ...dy,
+            exercises: dy.exercises.map((ex, ei) => {
+              if (ei !== exIdx) return ex;
+              const b = decodeBlock(ex);
+              if (field === "scheme") b.scheme = value;
+              else if (field === "title") b.title = value;
+              else if (field === "rest") b.rest = value;
+              else if (field === "movement") { b.movements = [...b.movements]; b.movements[movIdx] = value; }
+              return encodeBlock(b);
+            }),
+          };
+        }),
+      };
+    });
+    setCoachClient({ ...coachClient, plan: { weeks } });
+  }
+  // structural block edits (add/remove movement) persist immediately
+  function blockAddMovement(exIdx) {
+    const day = currentDay();
+    const exercises = day.exercises.map((ex, ei) => {
+      if (ei !== exIdx) return ex;
+      const b = decodeBlock(ex); b.movements = [...b.movements, ""]; return encodeBlock(b);
+    });
+    saveDay(weekIdx, dayIdx, day.title, exercises);
+  }
+  function blockRemoveMovement(exIdx, movIdx) {
+    const day = currentDay();
+    const exercises = day.exercises.map((ex, ei) => {
+      if (ei !== exIdx) return ex;
+      const b = decodeBlock(ex);
+      b.movements = b.movements.filter((_, mi) => mi !== movIdx);
+      if (!b.movements.length) b.movements = [""];
+      return encodeBlock(b);
+    });
+    saveDay(weekIdx, dayIdx, day.title, exercises);
   }
 
   function removeExercise(i) {
     const day = currentDay();
+    if (expandedEx === i) setExpandedEx(null);
     saveDay(weekIdx, dayIdx, day.title, day.exercises.filter((_, idx) => idx !== i));
   }
 
+  function updateSetDetail(exIdx, setIdx, field, value) {
+    const weeks = coachClient.plan.weeks.map((wk, wi) => {
+      if (wi !== weekIdx) return wk;
+      return {
+        days: wk.days.map((dy, di) => {
+          if (di !== dayIdx) return dy;
+          return {
+            ...dy,
+            exercises: dy.exercises.map((ex, ei) => {
+              if (ei !== exIdx) return ex;
+              const details = getSetDetails(ex).map((s, si) => (si === setIdx ? { ...s, [field]: value } : { ...s }));
+              return { ...ex, setDetails: undefined, ...detailsToFields(details) };
+            }),
+          };
+        }),
+      };
+    });
+    setCoachClient({ ...coachClient, plan: { weeks } });
+  }
+
+  function persistCurrentDay() {
+    const day = currentDay();
+    saveDay(weekIdx, dayIdx, day.title, day.exercises);
+  }
+
   function renameDay(title) {
-    // update locally right away for smooth typing, persist on blur
     const weeks = coachClient.plan.weeks.map((wk, wi) =>
       wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, title })) }
     );
@@ -518,7 +1032,7 @@ function PlanJinji() {
             </p>
           </div>
           <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
-            {MASCOTS[0]("hero1")}{MASCOTS[1]("hero2")}
+            {MASCOTS[0]("hero1")}{MASCOTS[4]("hero2")}
           </div>
         </div>
 
@@ -613,16 +1127,36 @@ function PlanJinji() {
   // ---- CLIENT SPACE ----
   if (screen === "client" && client) {
     const done = client.progress.week >= NUM_WEEKS;
-    const w = Math.min(client.progress.week, NUM_WEEKS - 1);
-    const d = Math.min(client.progress.day, client.plan.weeks[w].days.length - 1);
-    const day = client.plan.weeks[w].days[d];
+    const progressW = Math.min(client.progress.week, NUM_WEEKS - 1);
+    const progressWeekDays = client.plan.weeks[progressW].days;
+    const progressD = Math.min(client.progress.day, progressWeekDays.length - 1);
+
+    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const weekDays = client.plan.weeks[w].days;
+    const d = Math.min(selectedDay, weekDays.length - 1);
+    const day = weekDays[d];
+    const isCurrentWorkout = w === progressW && d === progressD;
     const exercises = day.exercises || [];
     const estMin = estimateMinutes(exercises);
     const lastLog = (client.logs || [])[client.logs.length - 1];
+    const xp = getXP(client.logs);
+    const { level, into, need } = levelInfo(xp);
+    const title = getTitle(level);
 
     return shell(
       <div>
         <div style={{ ...displayStyle, fontSize: 30, marginBottom: 2 }}>{client.profile.name}</div>
+        <Card style={{ marginBottom: 16, padding: 18, background: T.accentSoft, borderColor: T.accentDark }}>
+          <div style={{ ...displayStyle, fontSize: 18, marginBottom: 6 }}>
+            ⚔️ Level {level} · {title}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.sub, marginBottom: 6 }}>
+            XP {into} / {need}
+          </div>
+          <div style={{ height: 14, background: "#fff", border: "2px solid " + T.ink, borderRadius: 999, overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, (into / need) * 100)}%`, height: "100%", background: T.accent }} />
+          </div>
+        </Card>
         <div style={{ color: T.sub, fontSize: 14, marginBottom: 20 }}>
           {client.profile.frequency}×/week · {client.profile.goals}
         </div>
@@ -644,46 +1178,165 @@ function PlanJinji() {
             <Mascot mood="done" />
             <div style={{ ...displayStyle, fontSize: 22, color: T.good, marginBottom: 6 }}>Session logged ✓</div>
             <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>Your coach will see your feedback. Great work today.</p>
+            {earnedXP > 0 && (
+              <div style={{
+                marginTop: 14, padding: 10, background: "#FFF8D8", border: "2px solid #E5B800",
+                borderRadius: 10, textAlign: "center", fontWeight: 800, fontSize: 18, color: "#9A6B00"
+              }}>
+                ⭐ +{earnedXP} XP Earned!
+              </div>
+            )}
+            {leveledUpTo > 0 && (
+              <div style={{
+                marginTop: 12, padding: "14px 16px", background: T.accent, border: "2.5px solid " + T.ink,
+                borderRadius: 12, textAlign: "center", color: "#fff", boxShadow: "4px 4px 0 " + T.ink,
+                animation: "pj-rise .4s ease",
+              }}>
+                <div style={{ ...displayStyle, fontSize: 20, marginBottom: 4 }}>🎉 Level {leveledUpTo}!</div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{levelMsg}</div>
+              </div>
+            )}
+            <div style={{ marginTop: 14 }}>
+              <Btn small kind="ghost" onClick={() => {
+                setSaved(false); setEarnedXP(0); setLeveledUpTo(0); setSessionNote("");
+                const nw = Math.min(client.progress.week, NUM_WEEKS - 1);
+                setSelectedWeek(nw);
+                setSelectedDay(Math.min(client.progress.day, client.plan.weeks[nw].days.length - 1));
+              }}>
+                See what's next →
+              </Btn>
+            </div>
           </Card>
         ) : (
           <div>
             <Mascot mood="go" />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+              <Btn small kind="ghost" disabled={w === 0} onClick={() => { setSelectedWeek(w - 1); setSelectedDay(0); }}>
+                ◀ Previous week
+              </Btn>
+              <SectionLabel>Week {w + 1} of {NUM_WEEKS}</SectionLabel>
+              <Btn small kind="ghost" disabled={w === NUM_WEEKS - 1} onClick={() => { setSelectedWeek(w + 1); setSelectedDay(0); }}>
+                Next week ▶
+              </Btn>
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-              <SectionLabel>Week {w + 1} · {day.title} ({d + 1}/{client.plan.weeks[w].days.length})</SectionLabel>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 10 }}>
+                <Btn small kind="ghost" disabled={d === 0} onClick={() => setSelectedDay(d - 1)}>◀ Previous</Btn>
+                <SectionLabel>
+                  Week {w + 1} · Workout {d + 1} of {weekDays.length}{day.title ? ` · ${day.title}` : ""}
+                </SectionLabel>
+                <Btn small kind="ghost" disabled={d === weekDays.length - 1} onClick={() => setSelectedDay(d + 1)}>Next ▶</Btn>
+              </div>
               <span style={{ fontSize: 13, fontWeight: 800, color: T.sub }}>⏱ ~{estMin} min total</span>
             </div>
+
             {exercises.map((ex, i) => {
               const last = lastWeightFor(client.logs, ex.name);
+
+              // ----- METCON / BLOCK card -----
+              if (isBlock(ex)) {
+                const b = decodeBlock(ex);
+                return (
+                  <Card key={i} style={{ marginBottom: 14, padding: 18, borderColor: T.accentDark }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                      <div style={{ ...displayStyle, fontSize: 18 }}>⚡ {ex.name}</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {b.scheme && (
+                          <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: T.accent, color: "#fff", borderRadius: 8, padding: "4px 10px" }}>
+                            {b.scheme}
+                          </span>
+                        )}
+                        {ex.rest && (
+                          <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
+                            ⏲ rest {formatRest(ex.rest)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {last && (
+                      <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
+                        📈 Last time ({new Date(last.date).toLocaleDateString()}): {last.weight}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 12, borderTop: "1px solid " + T.line, paddingTop: 10 }}>
+                      {b.movements.map((m, k) => (
+                        <div key={k} style={{ fontSize: 15, fontWeight: 700, padding: "5px 0", display: "flex", gap: 8 }}>
+                          <span style={{ color: T.accent }}>▸</span> {m}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <input style={{ ...smallInput }} placeholder="Your result (time / rounds / reps)"
+                        value={(weightsUsed[i] || [])[0] || ""}
+                        onChange={(e) => setWeightForSet(i, 0, e.target.value)} />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginTop: 8 }}>
+                      <input style={{ ...smallInput }} placeholder="How did it feel? (pace, breathing, what to scale…)"
+                        value={comments[i] || ""}
+                        onChange={(e) => { setComments({ ...comments, [i]: e.target.value }); setSavedExercises({ ...savedExercises, [i]: false }); }} />
+                      <Btn small kind={savedExercises[i] ? "ghost" : "accent"} onClick={() => saveExercise(i)}>
+                        {savedExercises[i] ? "Saved ✓" : "Save"}
+                      </Btn>
+                    </div>
+                    {praise[i] && <PraiseBubble text={praise[i]} />}
+                  </Card>
+                );
+              }
+
+              // ----- normal exercise card -----
+              const details = getSetDetails(ex);
               return (
                 <Card key={i} style={{ marginBottom: 14, padding: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
                     <div style={{ ...displayStyle, fontSize: 18 }}>{ex.name}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: T.accent, color: "#fff", borderRadius: 8, padding: "4px 10px" }}>
-                        {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets || ex.reps || "—"}
-                        {ex.weight ? ` @ ${ex.weight}` : ""}
+                        {details.length} {details.length === 1 ? "set" : "sets"}
                       </span>
                       {ex.rest && (
                         <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
-                          ⏲ rest {ex.rest}s
+                          ⏲ rest {formatRest(ex.rest)}
                         </span>
                       )}
                     </div>
                   </div>
                   {last && (
-                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "3px 8px" }}>
-                      Last time: {last.weight} ({new Date(last.date).toLocaleDateString()})
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
+                      📈 Last time ({new Date(last.date).toLocaleDateString()}): {last.weight}
                     </div>
                   )}
-                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, marginTop: 12 }}>
-                    <input style={{ ...inputStyle, fontSize: 14, padding: "9px 10px" }} placeholder="Weight used" value={weightsUsed[i] || ""}
-                      onChange={(e) => setWeightsUsed({ ...weightsUsed, [i]: e.target.value })} />
-                    <input style={{ ...inputStyle, fontSize: 14, padding: "9px 10px" }} placeholder="How was it? (too heavy, easy, felt it in the knee…)"
-                      value={comments[i] || ""} onChange={(e) => setComments({ ...comments, [i]: e.target.value })} />
+                  <div style={{ marginTop: 12, borderTop: "1px solid " + T.line }}>
+                    {details.map((s, j) => (
+                      <div key={j} style={{
+                        display: "grid", gridTemplateColumns: "auto 1fr 120px", gap: 10, alignItems: "center",
+                        padding: "8px 0", borderBottom: "1px solid " + T.line,
+                      }}>
+                        <span style={{
+                          fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink,
+                          borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap",
+                        }}>SET {j + 1}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: T.sub }}>
+                          {s.reps ? `${s.reps} reps` : "—"}{s.weight ? ` @ ${s.weight}` : ""}
+                        </span>
+                        <input style={{ ...smallInput }} placeholder="Weight used"
+                          value={(weightsUsed[i] || [])[j] || ""}
+                          onChange={(e) => setWeightForSet(i, j, e.target.value)} />
+                      </div>
+                    ))}
                   </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginTop: 12 }}>
+                    <input style={{ ...smallInput }} placeholder="How was it? (too heavy, easy, felt it in the knee…)"
+                      value={comments[i] || ""}
+                      onChange={(e) => { setComments({ ...comments, [i]: e.target.value }); setSavedExercises({ ...savedExercises, [i]: false }); }} />
+                    <Btn small kind={savedExercises[i] ? "ghost" : "accent"} onClick={() => saveExercise(i)}>
+                      {savedExercises[i] ? "Saved ✓" : "Save"}
+                    </Btn>
+                  </div>
+                  {praise[i] && <PraiseBubble text={praise[i]} />}
                 </Card>
               );
             })}
+
             <Card style={{ marginBottom: 14, padding: 18, background: T.accentSoft, borderColor: T.accentDark, boxShadow: "4px 4px 0 " + T.accentDark }}>
               <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>
                 ⏱ Estimated session time: ~{estMin} minutes <span style={{ color: T.sub, fontWeight: 600 }}>(work + rest)</span>
@@ -692,8 +1345,8 @@ function PlanJinji() {
                 <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={sessionNote}
                   onChange={(e) => setSessionNote(e.target.value)} placeholder="Energy, soreness, anything the coach should know…" />
               </Field>
-              <Btn kind="accent" onClick={handleFinishSession} disabled={busy}>
-                {busy ? "Saving…" : "Finish & send to coach"}
+              <Btn kind="accent" onClick={handleFinishSession} disabled={busy || !isCurrentWorkout}>
+                {busy ? "Saving…" : isCurrentWorkout ? "Finish & send to coach" : "Preview only — finish workouts in order"}
               </Btn>
             </Card>
           </div>
@@ -740,10 +1393,15 @@ function PlanJinji() {
             </Card>
           ) : (
             clientList.map((c) => (
-              <Card key={c.id} style={{ marginBottom: 12, padding: 16, cursor: "pointer" }}>
-                <div onClick={() => openCoachClient(c.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ ...displayStyle, fontSize: 17 }}>{c.name}</div>
-                  <span style={{ color: T.accent, fontWeight: 800 }}>Open →</span>
+              <Card key={c.id} style={{ marginBottom: 12, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div onClick={() => openCoachClient(c.id)} style={{ ...displayStyle, fontSize: 17, cursor: "pointer", flex: 1 }}>{c.name}</div>
+                  <span onClick={() => openCoachClient(c.id)} style={{ color: T.accent, fontWeight: 800, cursor: "pointer" }}>Open →</span>
+                  <button onClick={(e) => { e.stopPropagation(); deleteClient(c.id, c.name); }}
+                    title={`Delete ${c.name}`}
+                    style={{ background: "#fff", border: "2px solid #C0392B", color: "#C0392B", borderRadius: 8, width: 30, height: 30, fontWeight: 900, cursor: "pointer", flexShrink: 0 }}>
+                    ✕
+                  </button>
                 </div>
               </Card>
             ))
@@ -798,14 +1456,14 @@ function PlanJinji() {
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
             {Array.from({ length: NUM_WEEKS }, (_, wi) => (
-              <Tab key={wi} active={wi === weekIdx} onClick={() => { setWeekIdx(wi); setDayIdx(0); }}>
+              <Tab key={wi} active={wi === weekIdx} onClick={() => { setWeekIdx(wi); setDayIdx(0); setExpandedEx(null); }}>
                 Week {wi + 1}
               </Tab>
             ))}
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid " + T.line }}>
             {week.days.map((dy, di) => (
-              <Tab key={di} active={di === dayIdx} onClick={() => setDayIdx(di)}>
+              <Tab key={di} active={di === dayIdx} onClick={() => { setDayIdx(di); setExpandedEx(null); }}>
                 {di + 1}. {dy.title} {dy.exercises.length ? `(${dy.exercises.length})` : "·"}
               </Tab>
             ))}
@@ -818,35 +1476,162 @@ function PlanJinji() {
           </Field>
 
           {day.exercises.length === 0 && (
-            <p style={{ color: T.sub, fontSize: 14 }}>No exercises in this workout yet — add below or use ✨ AI suggest.</p>
+            <p style={{ color: T.sub, fontSize: 14 }}>No exercises in this workout yet — add a single exercise or a metcon block below.</p>
           )}
-          {day.exercises.map((ex, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid " + T.line }}>
-              <div style={{ fontSize: 14 }}>
-                <strong>{ex.name}</strong>{" "}
-                <span style={{ color: T.sub }}>
-                  {ex.sets && ex.reps ? `${ex.sets}×${ex.reps}` : ""}{ex.weight ? ` @ ${ex.weight}` : ""}{ex.rest ? ` · rest ${ex.rest}s` : ""}
-                </span>
+
+          {day.exercises.map((ex, i) => {
+            const open = expandedEx === i;
+            const lastRes = lastWeightFor(coachClient.logs, ex.name);
+
+            // ----- BLOCK row -----
+            if (isBlock(ex)) {
+              const b = decodeBlock(ex);
+              return (
+                <div key={i} style={{ borderBottom: "1px solid " + T.line, padding: "8px 0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontSize: 14 }}>
+                      <span style={{ fontFamily: fontStack, fontWeight: 900, fontSize: 11, color: "#fff", background: T.accent, borderRadius: 5, padding: "2px 6px", marginRight: 6 }}>BLOCK</span>
+                      <strong>{ex.name}</strong>{" "}
+                      <span style={{ color: T.sub }}>{b.scheme}{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <button onClick={() => setExpandedEx(open ? null : i)}
+                        style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontWeight: 700, fontSize: 13, textDecoration: "underline" }}>
+                        {open ? "close" : "edit"}
+                      </button>
+                      <button onClick={() => removeExercise(i)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>remove</button>
+                    </div>
+                  </div>
+                  {!open && (
+                    <div style={{ marginTop: 4, fontSize: 13, color: T.sub }}>
+                      {b.movements.map((m, k) => <div key={k}>▸ {m}</div>)}
+                    </div>
+                  )}
+                  {lastRes && (
+                    <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accentDark }}>
+                      📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
+                    </div>
+                  )}
+                  {open && (
+                    <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 8, marginBottom: 8 }}>
+                        <input style={{ ...smallInput }} placeholder="Scheme (AMRAP 12 min / 21-15-9 / 3 rounds)"
+                          value={b.scheme} onChange={(e) => updateBlockLocal(i, "scheme", e.target.value)} onBlur={persistCurrentDay} />
+                        <input style={{ ...smallInput }} placeholder="Rest (s)"
+                          value={b.rest} onChange={(e) => updateBlockLocal(i, "rest", e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
+                      </div>
+                      {b.movements.map((m, k) => (
+                        <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                          <input style={{ ...smallInput }} placeholder={`Movement ${k + 1} (e.g. Thrusters 21 @ 40kg)`}
+                            value={m} onChange={(e) => updateBlockLocal(i, "movement", e.target.value, k)} onBlur={persistCurrentDay} />
+                          <button onClick={() => blockRemoveMovement(i, k)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 6 }}>
+                        <Btn small kind="ghost" onClick={() => blockAddMovement(i)}>+ Add movement</Btn>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            // ----- normal exercise row -----
+            const details = getSetDetails(ex);
+            return (
+              <div key={i} style={{ borderBottom: "1px solid " + T.line, padding: "8px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 14 }}>
+                    <strong>{ex.name}</strong>{" "}
+                    <span style={{ color: T.sub }}>{details.length} sets{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <button onClick={() => setExpandedEx(open ? null : i)}
+                      style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontWeight: 700, fontSize: 13, textDecoration: "underline" }}>
+                      {open ? "close sets" : "edit sets"}
+                    </button>
+                    <button onClick={() => removeExercise(i)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>remove</button>
+                  </div>
+                </div>
+                {!open && (
+                  <div style={{ marginTop: 4, fontSize: 13, color: T.sub }}>
+                    {details.map((s, j) => (
+                      <span key={j} style={{ marginRight: 10 }}>S{j + 1}: {s.reps || "—"}{s.weight ? `@${s.weight}` : ""}</span>
+                    ))}
+                  </div>
+                )}
+                {lastRes && (
+                  <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accentDark }}>
+                    📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
+                  </div>
+                )}
+                {open && (
+                  <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
+                    {details.map((s, j) => (
+                      <div key={j} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink, borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>SET {j + 1}</span>
+                        <input style={{ ...smallInput }} placeholder="Reps" value={s.reps || ""}
+                          onChange={(e) => updateSetDetail(i, j, "reps", e.target.value)} onBlur={persistCurrentDay} />
+                        <input style={{ ...smallInput }} placeholder="Weight" value={s.weight || ""}
+                          onChange={(e) => updateSetDetail(i, j, "weight", e.target.value)} onBlur={persistCurrentDay} />
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 12, color: T.sub, marginTop: 4 }}>Changes save automatically when you click out of a field.</div>
+                  </div>
+                )}
               </div>
-              <button onClick={() => removeExercise(i)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>
-                remove
-              </button>
-            </div>
-          ))}
+            );
+          })}
+
           {day.exercises.length > 0 && (
             <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800, color: T.sub }}>
               ⏱ Estimated session: ~{estimateMinutes(day.exercises)} min
             </div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginTop: 14 }}>
-            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Exercise" value={newEx.name} onChange={(e) => setNewEx({ ...newEx, name: e.target.value })} />
-            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Sets" value={newEx.sets} onChange={(e) => setNewEx({ ...newEx, sets: e.target.value })} />
-            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Reps" value={newEx.reps} onChange={(e) => setNewEx({ ...newEx, reps: e.target.value })} />
-            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Weight" value={newEx.weight} onChange={(e) => setNewEx({ ...newEx, weight: e.target.value })} />
-            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Rest (s)" value={newEx.rest} onChange={(e) => setNewEx({ ...newEx, rest: e.target.value.replace(/\D/g, "") })} />
+
+          {/* add single exercise */}
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid " + T.line }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.sub, marginBottom: 8 }}>ADD SINGLE EXERCISE</div>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8 }}>
+              <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Exercise" value={newEx.name} onChange={(e) => setNewEx({ ...newEx, name: e.target.value })} />
+              <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Sets" value={newEx.sets} onChange={(e) => setNewEx({ ...newEx, sets: e.target.value.replace(/\D/g, "") })} />
+              <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Reps" value={newEx.reps} onChange={(e) => setNewEx({ ...newEx, reps: e.target.value })} />
+              <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Weight" value={newEx.weight} onChange={(e) => setNewEx({ ...newEx, weight: e.target.value })} />
+              <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Rest (s)" value={newEx.rest} onChange={(e) => setNewEx({ ...newEx, rest: e.target.value.replace(/\D/g, "") })} />
+            </div>
+            <div style={{ fontSize: 12, color: T.sub, marginTop: 6 }}>
+              Adds with sets + reps + weight as defaults, then use <strong>edit sets</strong> to fine-tune each set (pyramid: 10@40, 8@50, 6@60, 4@70).
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <Btn small kind="accent" onClick={addExercise}>+ Add exercise</Btn>
+            </div>
           </div>
-          <div style={{ marginTop: 10 }}>
-            <Btn small kind="accent" onClick={addExercise}>+ Add exercise</Btn>
+
+          {/* add metcon / block */}
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid " + T.line }}>
+            {!showBlockForm ? (
+              <Btn small kind="ghost" onClick={() => setShowBlockForm(true)}>⚡ Add metcon / circuit block</Btn>
+            ) : (
+              <div style={{ background: T.accentSoft, border: "2px solid " + T.accentDark, borderRadius: 12, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.accentDark, marginBottom: 10 }}>⚡ NEW METCON / CIRCUIT BLOCK</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 90px", gap: 8, marginBottom: 8 }}>
+                  <input style={{ ...smallInput }} placeholder="Block title (e.g. Metcon)" value={newBlock.title} onChange={(e) => setNewBlock({ ...newBlock, title: e.target.value })} />
+                  <input style={{ ...smallInput }} placeholder="Scheme (AMRAP 12 min / 21-15-9)" value={newBlock.scheme} onChange={(e) => setNewBlock({ ...newBlock, scheme: e.target.value })} />
+                  <input style={{ ...smallInput }} placeholder="Rest (s)" value={newBlock.rest} onChange={(e) => setNewBlock({ ...newBlock, rest: e.target.value.replace(/\D/g, "") })} />
+                </div>
+                {newBlock.movements.map((m, k) => (
+                  <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                    <input style={{ ...smallInput }} placeholder={`Movement ${k + 1} (e.g. Wall balls 15 @ 9kg)`} value={m} onChange={(e) => setNewBlockMovement(k, e.target.value)} />
+                    <button onClick={() => removeNewBlockMovement(k)} style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>✕</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <Btn small kind="ghost" onClick={newBlockMovement}>+ Add movement</Btn>
+                  <Btn small kind="accent" onClick={addBlock}>Save block</Btn>
+                  <Btn small kind="ghost" onClick={() => { setShowBlockForm(false); setNewBlock({ title: "", scheme: "", rest: "", movements: [""] }); }}>Cancel</Btn>
+                </div>
+              </div>
+            )}
           </div>
         </Card>
 

@@ -1,44 +1,105 @@
-// PlanJinji server — Express + SQLite (Node's built-in node:sqlite, no native deps)
-// Run: node server.js   (Node 22+)
+// PlanJinji server — Express + Supabase Postgres (via node-postgres "pg")
+// Run locally: put DATABASE_URL in a .env file, then `node server.js`
+require("dotenv").config();
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
-const { DatabaseSync } = require("node:sqlite");
+const { Pool } = require("pg");
 
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "planjinji.db");
 const NUM_WEEKS = 5;
 const DEFAULT_COACH_PIN = "091997";
 
 // ---------- database ----------
-const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA foreign_keys = ON;");
-db.exec(fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8"));
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+const q = (text, params = []) => pool.query(text, params);
 
-const getSetting = (k) => {
-  const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(k);
-  return r ? r.value : null;
-};
-const setSetting = (k, v) =>
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-  ).run(k, String(v));
+// Creates every table if it doesnt already exist, then seeds the coach PIN.
+async function initDb() {
+  await q(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    goals TEXT,
+    frequency INTEGER NOT NULL,
+    facilities TEXT NOT NULL,
+    pin TEXT,
+    joined TEXT,
+    progress_week INTEGER NOT NULL DEFAULT 0,
+    progress_day INTEGER NOT NULL DEFAULT 0,
+    xp INTEGER NOT NULL DEFAULT 0
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS workout_days (
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    week INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    title TEXT,
+    UNIQUE (client_id, week, day)
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS exercises (
+    id SERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    week INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    sets TEXT,
+    reps TEXT,
+    weight TEXT,
+    rest TEXT
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS session_logs (
+    id SERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    date TEXT,
+    week INTEGER,
+    day INTEGER,
+    session_note TEXT
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS log_entries (
+    id SERIAL PRIMARY KEY,
+    log_id INTEGER NOT NULL REFERENCES session_logs(id) ON DELETE CASCADE,
+    exercise TEXT,
+    weight_used TEXT,
+    comment TEXT
+  )`);
+  const r = await q("SELECT value FROM settings WHERE key = 'coach_pin'");
+  if (r.rows.length === 0)
+    await q("INSERT INTO settings (key, value) VALUES ('coach_pin', $1)", [DEFAULT_COACH_PIN]);
+}
 
-if (!getSetting("coach_pin")) setSetting("coach_pin", DEFAULT_COACH_PIN);
+// ---------- settings / client helpers ----------
+async function getSetting(k) {
+  const r = await q("SELECT value FROM settings WHERE key = $1", [k]);
+  return r.rows.length ? r.rows[0].value : null;
+}
+async function setSetting(k, v) {
+  await q(
+    "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    [k, String(v)]
+  );
+}
+async function getClientRow(id) {
+  const r = await q("SELECT * FROM clients WHERE id = $1", [id]);
+  return r.rows[0] || null;
+}
 
-// ---------- helpers ----------
 const nameToId = (name) =>
   String(name).trim().toLowerCase().replace(/[^a-zא-ת0-9]+/gi, "_").replace(/^_+|_+$/g, "");
 
 const isClientPin = (p) => /^\d{4}$/.test(p);
 
-const getClientRow = (id) => db.prepare("SELECT * FROM clients WHERE id = ?").get(id);
-
-function assemblePlan(id, freq) {
-  const dayRows = db.prepare("SELECT * FROM workout_days WHERE client_id = ?").all(id);
-  const exRows = db
-    .prepare("SELECT * FROM exercises WHERE client_id = ? ORDER BY week, day, position")
-    .all(id);
+// ---------- assemblers ----------
+async function assemblePlan(id, freq) {
+  const dayRows = (await q("SELECT * FROM workout_days WHERE client_id = $1", [id])).rows;
+  const exRows = (
+    await q("SELECT * FROM exercises WHERE client_id = $1 ORDER BY week, day, position", [id])
+  ).rows;
   const weeks = [];
   for (let w = 0; w < NUM_WEEKS; w++) {
     const days = [];
@@ -56,24 +117,26 @@ function assemblePlan(id, freq) {
   return { weeks };
 }
 
-function assembleLogs(id) {
-  const logs = db.prepare("SELECT * FROM session_logs WHERE client_id = ? ORDER BY id").all(id);
-  const entryStmt = db.prepare("SELECT exercise, weight_used, comment FROM log_entries WHERE log_id = ? ORDER BY id");
-  return logs.map((l) => ({
-    date: l.date,
-    week: l.week,
-    day: l.day,
-    sessionNote: l.session_note,
-    entries: entryStmt.all(l.id).map((e) => ({
-      exercise: e.exercise,
-      weightUsed: e.weight_used,
-      comment: e.comment,
-    })),
-  }));
+async function assembleLogs(id) {
+  const logs = (await q("SELECT * FROM session_logs WHERE client_id = $1 ORDER BY id", [id])).rows;
+  const out = [];
+  for (const l of logs) {
+    const entries = (
+      await q("SELECT exercise, weight_used, comment FROM log_entries WHERE log_id = $1 ORDER BY id", [l.id])
+    ).rows;
+    out.push({
+      date: l.date,
+      week: l.week,
+      day: l.day,
+      sessionNote: l.session_note,
+      entries: entries.map((e) => ({ exercise: e.exercise, weightUsed: e.weight_used, comment: e.comment })),
+    });
+  }
+  return out;
 }
 
-function fullClient(id, { includePin = false } = {}) {
-  const c = getClientRow(id);
+async function fullClient(id, { includePin = false } = {}) {
+  const c = await getClientRow(id);
   if (!c) return null;
   return {
     id: c.id,
@@ -85,26 +148,30 @@ function fullClient(id, { includePin = false } = {}) {
       joined: c.joined,
       ...(includePin ? { pin: c.pin } : {}),
     },
-    plan: assemblePlan(id, c.frequency),
+    plan: await assemblePlan(id, c.frequency),
     progress: { week: c.progress_week, day: c.progress_day },
-    logs: assembleLogs(id),
+    xp: c.xp || 0,
+    logs: await assembleLogs(id),
   };
 }
 
-function replaceDay(clientId, week, day, title, exercises) {
-  db.prepare(
-    "INSERT INTO workout_days (client_id, week, day, title) VALUES (?, ?, ?, ?) " +
-      "ON CONFLICT(client_id, week, day) DO UPDATE SET title = excluded.title"
-  ).run(clientId, week, day, String(title || `Workout ${day + 1}`));
-  db.prepare("DELETE FROM exercises WHERE client_id = ? AND week = ? AND day = ?").run(clientId, week, day);
-  const ins = db.prepare(
-    "INSERT INTO exercises (client_id, week, day, position, name, sets, reps, weight, rest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+async function replaceDay(clientId, week, day, title, exercises) {
+  await q(
+    "INSERT INTO workout_days (client_id, week, day, title) VALUES ($1, $2, $3, $4) " +
+      "ON CONFLICT (client_id, week, day) DO UPDATE SET title = excluded.title",
+    [clientId, week, day, String(title || `Workout ${day + 1}`)]
   );
-  (exercises || []).forEach((ex, i) => {
+  await q("DELETE FROM exercises WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
+  const list = exercises || [];
+  for (let i = 0; i < list.length; i++) {
+    const ex = list[i];
     const name = String(ex.name || "").trim();
-    if (!name) return;
-    ins.run(clientId, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"));
-  });
+    if (!name) continue;
+    await q(
+      "INSERT INTO exercises (client_id, week, day, position, name, sets, reps, weight, rest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [clientId, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90")]
+    );
+  }
 }
 
 // ---------- app ----------
@@ -112,9 +179,16 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// wraps async handlers so a thrown error becomes a clean 500 instead of a hang
+const wrap = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch((err) => {
+    console.error("Route error:", err);
+    if (!res.headersSent) res.status(500).json({ error: "Server error: " + err.message });
+  });
+
 // ---- auth middlewares ----
-function clientAuth(req, res, next) {
-  const c = getClientRow(req.params.id);
+async function clientAuth(req, res, next) {
+  const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
   if (!c.pin || (req.headers["x-client-pin"] || "") !== c.pin)
     return res.status(401).json({ error: "Wrong PIN. If you forgot it, ask your coach." });
@@ -122,8 +196,9 @@ function clientAuth(req, res, next) {
   next();
 }
 
-function coachAuth(req, res, next) {
-  if ((req.headers["x-coach-pin"] || "") !== getSetting("coach_pin"))
+async function coachAuth(req, res, next) {
+  const pin = await getSetting("coach_pin");
+  if ((req.headers["x-coach-pin"] || "") !== pin)
     return res.status(401).json({ error: "Wrong coach PIN" });
   next();
 }
@@ -131,20 +206,20 @@ function coachAuth(req, res, next) {
 // ---- athlete routes ----
 
 // Step 1 of login: does this name exist?
-app.post("/api/login", (req, res) => {
+app.post("/api/login", wrap(async (req, res) => {
   const id = nameToId(req.body.name || "");
   if (!id) return res.status(400).json({ error: "Enter your full name to continue." });
-  const c = getClientRow(id);
+  const c = await getClientRow(id);
   if (!c) return res.json({ status: "new", id });
   res.json({ status: "existing", id, needsPinSetup: !c.pin, firstName: c.name.split(" ")[0] });
-});
+}));
 
 // Onboarding: create client + empty 5-week plan grid
-app.post("/api/clients", (req, res) => {
+app.post("/api/clients", wrap(async (req, res) => {
   const { name, goals, frequency, facilities, pin } = req.body || {};
   const id = nameToId(name || "");
   if (!id) return res.status(400).json({ error: "Enter your full name to continue." });
-  if (getClientRow(id)) return res.status(409).json({ error: "That name is already registered — log in instead." });
+  if (await getClientRow(id)) return res.status(409).json({ error: "That name is already registered — log in instead." });
   if (!String(goals || "").trim()) return res.status(400).json({ error: "Tell your coach what your goals are." });
   const freq = Math.min(7, Math.max(1, parseInt(frequency) || 0));
   if (!freq) return res.status(400).json({ error: "Pick how often you work out." });
@@ -152,100 +227,124 @@ app.post("/api/clients", (req, res) => {
     return res.status(400).json({ error: "Pick at least one training setup." });
   if (!isClientPin(pin)) return res.status(400).json({ error: "Choose a 4-digit PIN (numbers only)." });
 
-  db.prepare(
-    "INSERT INTO clients (id, name, goals, frequency, facilities, pin, joined) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, String(name).trim(), String(goals).trim(), freq, JSON.stringify(facilities), pin, new Date().toISOString());
-  const dayIns = db.prepare("INSERT INTO workout_days (client_id, week, day, title) VALUES (?, ?, ?, ?)");
+  await q(
+    "INSERT INTO clients (id, name, goals, frequency, facilities, pin, joined) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [id, String(name).trim(), String(goals).trim(), freq, JSON.stringify(facilities), pin, new Date().toISOString()]
+  );
   for (let w = 0; w < NUM_WEEKS; w++)
-    for (let d = 0; d < freq; d++) dayIns.run(id, w, d, `Workout ${d + 1}`);
+    for (let d = 0; d < freq; d++)
+      await q("INSERT INTO workout_days (client_id, week, day, title) VALUES ($1,$2,$3,$4)", [id, w, d, `Workout ${d + 1}`]);
 
-  res.json(fullClient(id));
-});
+  res.json(await fullClient(id));
+}));
 
 // Legacy clients created before PINs existed: set one
-app.post("/api/client/:id/set-pin", (req, res) => {
-  const c = getClientRow(req.params.id);
+app.post("/api/client/:id/set-pin", wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
   if (c.pin) return res.status(403).json({ error: "PIN already set" });
   if (!isClientPin(req.body.pin)) return res.status(400).json({ error: "PIN must be exactly 4 digits." });
-  db.prepare("UPDATE clients SET pin = ? WHERE id = ?").run(req.body.pin, c.id);
+  await q("UPDATE clients SET pin = $1 WHERE id = $2", [req.body.pin, c.id]);
   res.json({ ok: true });
-});
+}));
 
 // Full personal space (verifies PIN via header)
-app.get("/api/client/:id", clientAuth, (req, res) => {
-  res.json(fullClient(req.params.id));
-});
+app.get("/api/client/:id", wrap(clientAuth), wrap(async (req, res) => {
+  res.json(await fullClient(req.params.id));
+}));
 
 // Finish a session: log feedback + weights, advance to next workout
-app.post("/api/client/:id/finish", clientAuth, (req, res) => {
+app.post("/api/client/:id/finish", wrap(clientAuth), wrap(async (req, res) => {
   const c = req.clientRow;
   if (c.progress_week >= NUM_WEEKS) return res.status(400).json({ error: "Program already complete." });
   const { entries, sessionNote } = req.body || {};
-  const logId = db
-    .prepare("INSERT INTO session_logs (client_id, date, week, day, session_note) VALUES (?, ?, ?, ?, ?)")
-    .run(c.id, new Date().toISOString(), c.progress_week + 1, c.progress_day + 1, String(sessionNote || "").trim())
-    .lastInsertRowid;
-  const ins = db.prepare("INSERT INTO log_entries (log_id, exercise, weight_used, comment) VALUES (?, ?, ?, ?)");
-  (Array.isArray(entries) ? entries : []).forEach((e) =>
-    ins.run(logId, String(e.exercise || ""), String(e.weightUsed || "").trim(), String(e.comment || "").trim())
+
+  const ins = await q(
+    "INSERT INTO session_logs (client_id, date, week, day, session_note) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+    [c.id, new Date().toISOString(), c.progress_week + 1, c.progress_day + 1, String(sessionNote || "").trim()]
   );
+  const logId = ins.rows[0].id;
+
+  for (const e of (Array.isArray(entries) ? entries : [])) {
+    await q(
+      "INSERT INTO log_entries (log_id, exercise, weight_used, comment) VALUES ($1,$2,$3,$4)",
+      [logId, String((e && e.exercise) || ""), String((e && e.weightUsed) || "").trim(), String((e && e.comment) || "").trim()]
+    );
+  }
+
   // advance the pointer
   let nw = c.progress_week, nd = c.progress_day + 1;
   if (nd >= c.frequency) { nd = 0; nw += 1; }
-  db.prepare("UPDATE clients SET progress_week = ?, progress_day = ? WHERE id = ?").run(nw, nd, c.id);
-  res.json(fullClient(c.id));
-});
+  await q("UPDATE clients SET progress_week = $1, progress_day = $2, xp = COALESCE(xp, 0) + 250 WHERE id = $3", [nw, nd, c.id]);
+
+  res.json(await fullClient(c.id));
+}));
 
 // ---- coach routes ----
 
-app.post("/api/coach/login", (req, res) => {
-  if ((req.body.pin || "") !== getSetting("coach_pin")) return res.status(401).json({ error: "Wrong PIN." });
+app.post("/api/coach/login", wrap(async (req, res) => {
+  const pin = await getSetting("coach_pin");
+  if ((req.body.pin || "") !== pin) return res.status(401).json({ error: "Wrong PIN." });
   res.json({ ok: true });
-});
+}));
 
-app.post("/api/coach/change-pin", coachAuth, (req, res) => {
+app.post("/api/coach/change-pin", wrap(coachAuth), wrap(async (req, res) => {
   const p = String(req.body.pin || "");
   if (!/^\d{4,8}$/.test(p)) return res.status(400).json({ error: "Coach PIN must be 4-8 digits." });
-  setSetting("coach_pin", p);
+  await setSetting("coach_pin", p);
   res.json({ ok: true });
-});
+}));
 
-app.get("/api/coach/clients", coachAuth, (req, res) => {
-  res.json(db.prepare("SELECT id, name, frequency FROM clients ORDER BY name").all());
-});
+app.get("/api/coach/clients", wrap(coachAuth), wrap(async (req, res) => {
+  const r = await q("SELECT id, name, frequency FROM clients ORDER BY name");
+  res.json(r.rows);
+}));
 
-app.get("/api/coach/client/:id", coachAuth, (req, res) => {
-  const c = fullClient(req.params.id, { includePin: true });
+app.get("/api/coach/client/:id", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await fullClient(req.params.id, { includePin: true });
   if (!c) return res.status(404).json({ error: "Client not found" });
   res.json(c);
-});
+}));
+
+// Delete a client and all their data (coach only)
+app.delete("/api/coach/client/:id", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
+  if (!c) return res.status(404).json({ error: "Client not found" });
+  // ON DELETE CASCADE handles children, but we clear them explicitly to be safe.
+  const logs = (await q("SELECT id FROM session_logs WHERE client_id = $1", [c.id])).rows;
+  for (const row of logs) await q("DELETE FROM log_entries WHERE log_id = $1", [row.id]);
+  await q("DELETE FROM session_logs WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM exercises WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM workout_days WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM clients WHERE id = $1", [c.id]);
+  res.json({ ok: true });
+}));
 
 // Replace one workout day (title + exercises) — covers add/remove/edit/copy
-app.put("/api/coach/client/:id/day", coachAuth, (req, res) => {
-  const c = getClientRow(req.params.id);
+app.put("/api/coach/client/:id/day", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
   const { week, day, title, exercises } = req.body || {};
   const w = parseInt(week), d = parseInt(day);
   if (isNaN(w) || w < 0 || w >= NUM_WEEKS || isNaN(d) || d < 0 || d >= c.frequency)
     return res.status(400).json({ error: "Invalid week/day" });
-  replaceDay(c.id, w, d, title, exercises);
-  res.json(fullClient(c.id, { includePin: true }));
-});
+  await replaceDay(c.id, w, d, title, exercises);
+  res.json(await fullClient(c.id, { includePin: true }));
+}));
 
-app.post("/api/coach/client/:id/reset-pin", coachAuth, (req, res) => {
-  const c = getClientRow(req.params.id);
+app.post("/api/coach/client/:id/reset-pin", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
-  db.prepare("UPDATE clients SET pin = NULL WHERE id = ?").run(c.id);
+  await q("UPDATE clients SET pin = NULL WHERE id = $1", [c.id]);
   res.json({ ok: true });
-});
+}));
 
 // AI-suggested week (requires ANTHROPIC_API_KEY in the environment)
-app.post("/api/coach/client/:id/ai-week", coachAuth, async (req, res) => {
+app.post("/api/coach/client/:id/ai-week", wrap(coachAuth), wrap(async (req, res) => {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key)
-    return res.status(400).json({ error: "AI suggestions need an Anthropic API key. Start the server with ANTHROPIC_API_KEY set." });
-  const c = getClientRow(req.params.id);
+    return res.status(400).json({ error: "AI suggestions need an Anthropic API key. Set ANTHROPIC_API_KEY." });
+  const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
   const w = parseInt(req.body.week);
   if (isNaN(w) || w < 0 || w >= NUM_WEEKS) return res.status(400).json({ error: "Invalid week" });
@@ -279,17 +378,26 @@ Exactly ${c.frequency} days. 4-5 exercises per day. Keep every string short. "re
     const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
     for (let d = 0; d < c.frequency; d++) {
       const src = (parsed.days || [])[d] || {};
-      replaceDay(c.id, w, d, String(src.title || `Workout ${d + 1}`).slice(0, 40), src.exercises || []);
+      await replaceDay(c.id, w, d, String(src.title || `Workout ${d + 1}`).slice(0, 40), src.exercises || []);
     }
-    res.json(fullClient(c.id, { includePin: true }));
+    res.json(await fullClient(c.id, { includePin: true }));
   } catch (e) {
     console.error("AI suggestion failed:", e.message);
     res.status(502).json({ error: "AI suggestion didn't come back clean — hit the button again." });
   }
-});
+}));
 
-app.listen(PORT, () => {
-  console.log(`PlanJinji running on http://localhost:${PORT}`);
-  console.log(`Database: ${DB_PATH}`);
-  console.log(`AI suggestions: ${process.env.ANTHROPIC_API_KEY ? "enabled" : "disabled (set ANTHROPIC_API_KEY to enable)"}`);
-});
+// ---------- start ----------
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`PlanJinji running on http://localhost:${PORT}`);
+      console.log(`Database: Supabase Postgres (connected)`);
+      console.log(`AI suggestions: ${process.env.ANTHROPIC_API_KEY ? "enabled" : "disabled (set ANTHROPIC_API_KEY to enable)"}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Could not start — database connection/init failed:");
+    console.error(err.message);
+    process.exit(1);
+  });
