@@ -864,15 +864,26 @@ async function deleteClient(id, name) {
     });
     setCoachClient({ ...coachClient, plan: { weeks } });
   }
-  // structural block edits (add/remove movement) persist immediately
-  function blockAddMovement(exIdx) {
-    const day = currentDay();
-    const exercises = day.exercises.map((ex, ei) => {
-      if (ei !== exIdx) return ex;
-      const b = decodeBlock(ex); b.movements = [...b.movements, ""]; return encodeBlock(b);
-    });
-    saveDay(weekIdx, dayIdx, day.title, exercises);
-  }
+  // structural block edits (add/remove movement) persist immediatelyfunction blockAddMovement(exIdx) {
+  const weeks = coachClient.plan.weeks.map((wk, wi) => {
+    if (wi !== weekIdx) return wk;
+    return {
+      days: wk.days.map((dy, di) => {
+        if (di !== dayIdx) return dy;
+        return {
+          ...dy,
+          exercises: dy.exercises.map((ex, ei) => {
+            if (ei !== exIdx) return ex;
+            const b = decodeBlock(ex);
+            b.movements = [...b.movements, ""];
+            return encodeBlock(b);
+          }),
+        };
+      }),
+    };
+  });
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
   function blockRemoveMovement(exIdx, movIdx) {
     const day = currentDay();
     const exercises = day.exercises.map((ex, ei) => {
@@ -1659,7 +1670,7 @@ async function deleteClient(id, name) {
   }
 
   return shell(<Card>Loading…</Card>);
-}
+
 
 ReactDOM.createRoot(document.getElementById("root")).render(<PlanJinji />);
 </script>
