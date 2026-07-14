@@ -393,16 +393,15 @@ function estimateMinutes(exercises) {
   let sec = 0;
   for (const ex of exercises) {
     if (isBlock(ex)) {
-      sec += blockMinutes(ex) * 60 + (parseInt(ex.rest) || 60);
+      sec += (parseInt(ex.rest) || 0);
       continue;
     }
     const sets = getSetDetails(ex).length;
-    const rest = parseInt(ex.rest) || 60;
-    sec += sets * (45 + rest);
+    const rest = parseInt(ex.rest) || 0;
+    sec += sets * rest;
   }
-  return Math.max(5, Math.round(sec / 60));
+  return Math.round(sec / 60);
 }
-
 // rest seconds → human string in minutes ("45s", "1:30 min", "2 min")
 function formatRest(restSec) {
   const s = parseInt(restSec) || 0;
@@ -1248,7 +1247,7 @@ async function deleteClient(id, name) {
                         )}
                         {ex.rest && (
                           <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
-                            ⏲ rest {formatRest(ex.rest)}
+                             ⏲ EMOM {formatRest(ex.rest)}
                           </span>
                         )}
                       </div>
@@ -1295,7 +1294,7 @@ async function deleteClient(id, name) {
                       </span>
                       {ex.rest && (
                         <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
-                          ⏲ rest {formatRest(ex.rest)}
+                          ⏲ EMOM {formatRest(ex.rest)}
                         </span>
                       )}
                     </div>
