@@ -864,7 +864,8 @@ async function deleteClient(id, name) {
     });
     setCoachClient({ ...coachClient, plan: { weeks } });
   }
-  // structural block edits (add/remove movement) persist immediatelyfunction blockAddMovement(exIdx) {
+  // structural block edits (add/remove movement) persist immediately
+  function blockAddMovement(exIdx) {
   const weeks = coachClient.plan.weeks.map((wk, wi) => {
     if (wi !== weekIdx) return wk;
     return {
@@ -1670,7 +1671,7 @@ async function deleteClient(id, name) {
   }
 
   return shell(<Card>Loading…</Card>);
-
+}
 
 ReactDOM.createRoot(document.getElementById("root")).render(<PlanJinji />);
 </script>
