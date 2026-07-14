@@ -366,7 +366,7 @@ function decodeBlock(ex) {
   return {
     title: ex.name || "Metcon",
     scheme: ex.weight || "",
-    movements: String(ex.reps || "").split("|").map((s) => s.trim()).filter(Boolean),
+    movements: String(ex.reps || "").split("|").map((s) => s.trimStart()),
     rest: ex.rest || "60",
   };
 }
@@ -842,28 +842,35 @@ async function deleteClient(id, name) {
 
   // edit an existing block: text edits update local plan, persist on blur
   function updateBlockLocal(exIdx, field, value, movIdx) {
-    const weeks = coachClient.plan.weeks.map((wk, wi) => {
-      if (wi !== weekIdx) return wk;
-      return {
-        days: wk.days.map((dy, di) => {
-          if (di !== dayIdx) return dy;
-          return {
-            ...dy,
-            exercises: dy.exercises.map((ex, ei) => {
-              if (ei !== exIdx) return ex;
-              const b = decodeBlock(ex);
-              if (field === "scheme") b.scheme = value;
-              else if (field === "title") b.title = value;
-              else if (field === "rest") b.rest = value;
-              else if (field === "movement") { b.movements = [...b.movements]; b.movements[movIdx] = value; }
-              return encodeBlock(b);
-            }),
-          };
-        }),
-      };
-    });
-    setCoachClient({ ...coachClient, plan: { weeks } });
-  }
+  const weeks = coachClient.plan.weeks.map((wk, wi) => {
+    if (wi !== weekIdx) return wk;
+    return {
+      days: wk.days.map((dy, di) => {
+        if (di !== dayIdx) return dy;
+        return {
+          ...dy,
+          exercises: dy.exercises.map((ex, ei) => {
+            if (ei !== exIdx) return ex;
+            const b = decodeBlock(ex);
+            if (field === "scheme") b.scheme = value;
+            else if (field === "title") b.title = value;
+            else if (field === "rest") b.rest = value;
+            else if (field === "movement") { b.movements = [...b.movements]; b.movements[movIdx] = value; }
+            // encode WITHOUT trimming, so spaces you type survive
+            return {
+              name: b.title,
+              sets: "block",
+              weight: b.scheme,
+              reps: b.movements.join(" | "),
+              rest: b.rest || "60",
+            };
+          }),
+        };
+      }),
+    };
+  });
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
   // structural block edits (add/remove movement) persist immediately
   function blockAddMovement(exIdx) {
   const weeks = coachClient.plan.weeks.map((wk, wi) => {
@@ -902,6 +909,14 @@ async function deleteClient(id, name) {
     if (expandedEx === i) setExpandedEx(null);
     saveDay(weekIdx, dayIdx, day.title, day.exercises.filter((_, idx) => idx !== i));
   }
+  function moveExercise(i, dir) {
+  const day = currentDay();
+  const j = i + dir;
+  if (j < 0 || j >= day.exercises.length) return;
+  const exs = [...day.exercises];
+  [exs[i], exs[j]] = [exs[j], exs[i]];
+  saveDay(weekIdx, dayIdx, day.title, exs);
+}
 
   function updateSetDetail(exIdx, setIdx, field, value) {
     const weeks = coachClient.plan.weeks.map((wk, wi) => {
@@ -1506,7 +1521,9 @@ async function deleteClient(id, name) {
                       <span style={{ color: T.sub }}>{b.scheme}{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
                     </div>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <button onClick={() => setExpandedEx(open ? null : i)}
+  <button onClick={() => moveExercise(i, -1)} title="Move up" style={{ background: "none", border: "none", color: T.ink, cursor: "pointer", fontWeight: 900, fontSize: 15 }}>↑</button>
+  <button onClick={() => moveExercise(i, 1)} title="Move down" style={{ background: "none", border: "none", color: T.ink, cursor: "pointer", fontWeight: 900, fontSize: 15 }}>↓</button>
+  <button onClick={() => setExpandedEx(open ? null : i)}
                         style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontWeight: 700, fontSize: 13, textDecoration: "underline" }}>
                         {open ? "close" : "edit"}
                       </button>
@@ -1557,7 +1574,9 @@ async function deleteClient(id, name) {
                     <span style={{ color: T.sub }}>{details.length} sets{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
                   </div>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <button onClick={() => setExpandedEx(open ? null : i)}
+  <button onClick={() => moveExercise(i, -1)} title="Move up" style={{ background: "none", border: "none", color: T.ink, cursor: "pointer", fontWeight: 900, fontSize: 15 }}>↑</button>
+  <button onClick={() => moveExercise(i, 1)} title="Move down" style={{ background: "none", border: "none", color: T.ink, cursor: "pointer", fontWeight: 900, fontSize: 15 }}>↓</button>
+  <button onClick={() => setExpandedEx(open ? null : i)}
                       style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontWeight: 700, fontSize: 13, textDecoration: "underline" }}>
                       {open ? "close sets" : "edit sets"}
                     </button>
