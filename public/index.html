@@ -1082,6 +1082,42 @@ async function deleteClient(id, name) {
     });
     setCoachClient({ ...coachClient, plan: { weeks } });
 }
+
+function addSet(exIdx) {
+  const day = currentDay();
+  const exercises = day.exercises.map((ex, ei) => {
+    if (ei !== exIdx) return ex;
+    const details = getSetDetails(ex);
+    const last = details[details.length - 1] || { reps: "", weight: "" };
+    return { ...ex, setDetails: [...details, { ...last }] };
+  });
+  const weeks = coachClient.plan.weeks.map((wk, wi) =>
+    wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
+  );
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
+
+function removeSet(exIdx, setIdx) {
+  const day = currentDay();
+  const exercises = day.exercises.map((ex, ei) => {
+    if (ei !== exIdx) return ex;
+    const details = getSetDetails(ex).filter((_, si) => si !== setIdx);
+    return { ...ex, setDetails: details.length ? details : [{ reps: "", weight: "" }] };
+  });
+  const weeks = coachClient.plan.weeks.map((wk, wi) =>
+    wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
+  );
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
+
+function updateRest(exIdx, value) {
+  const day = currentDay();
+  const exercises = day.exercises.map((ex, ei) => (ei !== exIdx ? ex : { ...ex, rest: value }));
+  const weeks = coachClient.plan.weeks.map((wk, wi) =>
+    wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
+  );
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
   function persistCurrentDay() {
   const day = currentDay();
   const packed = day.exercises.map((ex) =>
@@ -1761,15 +1797,23 @@ async function deleteClient(id, name) {
                 )}
                 {open && (
                   <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
-                    {details.map((s, j) => (
-                      <div key={j} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                   {details.map((s, j) => (
+                      <div key={j} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 30px", gap: 8, alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink, borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>SET {j + 1}</span>
                         <input style={{ ...smallInput }} placeholder="Reps" value={s.reps || ""}
                           onChange={(e) => updateSetDetail(i, j, "reps", e.target.value)} onBlur={persistCurrentDay} />
                         <input style={{ ...smallInput }} placeholder="Weight" value={s.weight || ""}
                           onChange={(e) => updateSetDetail(i, j, "weight", e.target.value)} onBlur={persistCurrentDay} />
+                        <button onClick={() => { removeSet(i, j); persistCurrentDay(); }} title="Remove set"
+                          style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>✕</button>
                       </div>
                     ))}
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                      <Btn small kind="ghost" onClick={() => { addSet(i); persistCurrentDay(); }}>+ Add set</Btn>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: T.sub }}>Rest (s):</span>
+                      <input style={{ ...smallInput, width: 90 }} placeholder="Rest (s)" value={ex.rest || ""}
+                        onChange={(e) => updateRest(i, e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
+                    </div>
                     <div style={{ fontSize: 12, color: T.sub, marginTop: 4 }}>Changes save automatically when you click out of a field.</div>
                   </div>
                 )}
