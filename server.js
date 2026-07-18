@@ -7,6 +7,7 @@ const { Pool } = require("pg");
 
 const PORT = process.env.PORT || 3000;
 const NUM_WEEKS = 5;
+const MAX_DAYS_PER_WEEK = 30; // sanity ceiling — days beyond a client's frequency can still hold built workouts
 const DEFAULT_COACH_PIN = "091997";
 
 // ---------- database ----------
@@ -95,6 +96,9 @@ const nameToId = (name) =>
 const isClientPin = (p) => /^\d{4}$/.test(p);
 
 // ---------- assemblers ----------
+// A week shows `freq` day slots, but if it already has exercises built past that
+// (e.g. the athlete lowered their frequency after the coach filled in extra days),
+// those built days stay visible instead of vanishing.
 async function assemblePlan(id, freq) {
   const dayRows = (await q("SELECT * FROM workout_days WHERE client_id = $1", [id])).rows;
   const exRows = (
@@ -102,8 +106,10 @@ async function assemblePlan(id, freq) {
   ).rows;
   const weeks = [];
   for (let w = 0; w < NUM_WEEKS; w++) {
+    const maxBuiltDay = exRows.reduce((m, r) => (r.week === w && r.day + 1 > m ? r.day + 1 : m), 0);
+    const dayCount = Math.max(freq, maxBuiltDay);
     const days = [];
-    for (let d = 0; d < freq; d++) {
+    for (let d = 0; d < dayCount; d++) {
       const dr = dayRows.find((r) => r.week === w && r.day === d);
       days.push({
         title: (dr && dr.title) || `Workout ${d + 1}`,
@@ -264,6 +270,44 @@ app.get("/api/client/:id", wrap(clientAuth), wrap(async (req, res) => {
   res.json(await fullClient(req.params.id));
 }));
 
+// Athlete edits their own goals/frequency/equipment. Lowering frequency only clears
+// the empty overflow day slots — anything the coach already built stays put and stays visible.
+app.put("/api/client/:id/profile", wrap(clientAuth), wrap(async (req, res) => {
+  const c = req.clientRow;
+  const { goals, frequency, facilities } = req.body || {};
+  if (!String(goals || "").trim()) return res.status(400).json({ error: "Tell your coach what your goals are." });
+  const freq = Math.min(7, Math.max(1, parseInt(frequency) || 0));
+  if (!freq) return res.status(400).json({ error: "Pick how often you work out." });
+  if (!Array.isArray(facilities) || facilities.length === 0)
+    return res.status(400).json({ error: "Pick at least one training setup." });
+
+  const oldFreq = c.frequency;
+  await q("UPDATE clients SET goals = $1, frequency = $2, facilities = $3 WHERE id = $4", [
+    String(goals).trim(), freq, JSON.stringify(facilities), c.id,
+  ]);
+
+  if (freq < oldFreq) {
+    for (let w = 0; w < NUM_WEEKS; w++) {
+      for (let d = freq; d < oldFreq; d++) {
+        const built = await q("SELECT 1 FROM exercises WHERE client_id = $1 AND week = $2 AND day = $3 LIMIT 1", [c.id, w, d]);
+        if (built.rows.length === 0)
+          await q("DELETE FROM workout_days WHERE client_id = $1 AND week = $2 AND day = $3", [c.id, w, d]);
+      }
+    }
+  } else if (freq > oldFreq) {
+    for (let w = 0; w < NUM_WEEKS; w++) {
+      for (let d = oldFreq; d < freq; d++) {
+        await q(
+          "INSERT INTO workout_days (client_id, week, day, title) VALUES ($1,$2,$3,$4) ON CONFLICT (client_id, week, day) DO NOTHING",
+          [c.id, w, d, `Workout ${d + 1}`]
+        );
+      }
+    }
+  }
+
+  res.json(await fullClient(c.id));
+}));
+
 // Finish a session: log feedback + weights, advance to next workout
 app.post("/api/client/:id/finish", wrap(clientAuth), wrap(async (req, res) => {
   const c = req.clientRow;
@@ -337,7 +381,7 @@ app.put("/api/coach/client/:id/day", wrap(coachAuth), wrap(async (req, res) => {
   if (!c) return res.status(404).json({ error: "Client not found" });
   const { week, day, title, exercises } = req.body || {};
   const w = parseInt(week), d = parseInt(day);
-  if (isNaN(w) || w < 0 || w >= NUM_WEEKS || isNaN(d) || d < 0 || d >= c.frequency)
+  if (isNaN(w) || w < 0 || w >= NUM_WEEKS || isNaN(d) || d < 0 || d >= MAX_DAYS_PER_WEEK)
     return res.status(400).json({ error: "Invalid week/day" });
   await replaceDay(c.id, w, d, title, exercises);
   res.json(await fullClient(c.id, { includePin: true }));
