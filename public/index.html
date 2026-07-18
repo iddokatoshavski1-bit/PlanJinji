@@ -303,6 +303,140 @@ function PraiseBubble({ text }) {
   );
 }
 
+// ---------- multi-set countdown timer ----------
+// Runs `sets` rounds of `seconds` back to back, beeping between each.
+// Deadline-based (not tick-based) so it stays accurate if iOS throttles the tab.
+function SetTimer({ seconds, sets, label }) {
+  const total = Math.max(1, parseInt(sets) || 1);
+  const per = Math.max(1, parseInt(seconds) || 0);
+
+  const [setNo, setSetNo] = useState(1);
+  const [left, setLeft] = useState(per);
+  const [running, setRunning] = useState(false);
+  const [finished, setFinished] = useState(false);
+
+  const deadline = useRef(null);
+  const setNoRef = useRef(1);
+  const ctxRef = useRef(null);
+
+  // iOS only allows audio created/resumed inside a real tap, so we make the
+  // AudioContext on the first Start press and reuse it for every later beep.
+  function ensureAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!ctxRef.current) ctxRef.current = new AC();
+      if (ctxRef.current.state === "suspended") ctxRef.current.resume();
+    } catch (e) { /* no audio, timer still works */ }
+  }
+
+  function beep(long) {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    try {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = long ? 880 : 620;
+      g.gain.setValueAtTime(0.3, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (long ? 0.8 : 0.25));
+      o.start();
+      o.stop(ctx.currentTime + (long ? 0.85 : 0.3));
+    } catch (e) { /* ignore */ }
+  }
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      const rem = Math.round((deadline.current - Date.now()) / 1000);
+      if (rem > 0) { setLeft(rem); return; }
+
+      if (setNoRef.current < total) {
+        beep(false);                                   // set done → next set
+        setNoRef.current += 1;
+        setSetNo(setNoRef.current);
+        deadline.current = Date.now() + per * 1000;
+        setLeft(per);
+      } else {
+        beep(true);                                    // all sets done
+        clearInterval(id);
+        setRunning(false);
+        setFinished(true);
+        setLeft(0);
+      }
+    }, 200);
+    return () => clearInterval(id);
+  }, [running, per, total]);
+
+  function start() {
+    ensureAudio();
+    if (finished) {                                    // restart from set 1
+      setNoRef.current = 1; setSetNo(1); setLeft(per); setFinished(false);
+      deadline.current = Date.now() + per * 1000;
+      setRunning(true);
+      return;
+    }
+    deadline.current = Date.now() + left * 1000;       // resume from where paused
+    setRunning(true);
+  }
+
+  function reset() {
+    setRunning(false); setFinished(false);
+    setNoRef.current = 1; setSetNo(1); setLeft(per);
+  }
+
+  function skip() {
+    if (setNoRef.current < total) {
+      setNoRef.current += 1;
+      setSetNo(setNoRef.current);
+      deadline.current = Date.now() + per * 1000;
+      setLeft(per);
+    } else {
+      setRunning(false); setFinished(true); setLeft(0);
+    }
+  }
+
+  const mm = String(Math.floor(left / 60)).padStart(2, "0");
+  const ss = String(left % 60).padStart(2, "0");
+
+  return (
+    <div style={{
+      marginTop: 12, padding: "12px 14px", background: finished ? "#E8F5EC" : T.bg,
+      border: "2px solid " + (finished ? T.good : T.ink), borderRadius: 12,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <span style={{
+          fontFamily: fontStack, fontWeight: 900, fontSize: 30, letterSpacing: "-0.02em",
+          color: finished ? T.good : T.ink, minWidth: 92,
+        }}>{mm}:{ss}</span>
+
+        <div style={{ flex: 1, minWidth: 90 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: T.sub, marginBottom: 4 }}>
+            {finished ? "ALL SETS DONE 🏆" : `SET ${setNo} OF ${total}`}
+            {label ? ` · ${label}` : ""}
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {Array.from({ length: total }, (_, k) => (
+              <span key={k} style={{
+                height: 8, flex: 1, borderRadius: 999, border: "1px solid " + T.ink,
+                background: finished || k + 1 < setNo ? T.good : (k + 1 === setNo ? T.accent : "#fff"),
+              }} />
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 6 }}>
+          <Btn small kind={running ? "ghost" : "accent"}
+            onClick={() => (running ? setRunning(false) : start())}>
+            {running ? "⏸" : finished ? "↺ Again" : "▶ Start"}
+          </Btn>
+          {!finished && <Btn small kind="ghost" onClick={skip}>⏭</Btn>}
+          <Btn small kind="ghost" onClick={reset}>↺</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- XP / level helpers (doubling curve) ----------
 // Each level needs 2× the previous: L1→L2 = 250, L2→L3 = 500, L3→L4 = 1000, ...
 // Cumulative XP to *reach* level n = 250 * (2^(n-1) - 1)
@@ -423,7 +557,13 @@ function lastWeightFor(logs, exName) {
   }
   return null;
 }
-
+// pulls a URL out of any text, returns { text, url }
+function splitLink(str) {
+  const s = String(str || "");
+  const m = s.match(/(https?:\/\/\S+)/i);
+  if (!m) return { text: s, url: null };
+  return { text: s.replace(m[1], "").trim(), url: m[1] };
+}
 // ---------- UI atoms ----------
 function PJMark({ size = 34 }) {
   return (
@@ -711,7 +851,7 @@ function PlanJinji() {
       const copy = { ...p }; delete copy[i]; return copy;
     }), 3500);
   }
-
+  
   async function handleFinishSession() {
     setBusy(true); setError("");
     try {
@@ -743,6 +883,8 @@ function PlanJinji() {
       persistSession(record, clientPin);
       setEarnedXP(250);
 
+
+      
       // level-up check
       const newXp = getXP(record.logs);
       if (getLevel(newXp) > getLevel(prevXp)) {
@@ -1285,11 +1427,20 @@ async function deleteClient(id, name) {
                       </div>
                     )}
                     <div style={{ marginTop: 12, borderTop: "1px solid " + T.line, paddingTop: 10 }}>
-                      {b.movements.map((m, k) => (
-                        <div key={k} style={{ fontSize: 15, fontWeight: 700, padding: "5px 0", display: "flex", gap: 8 }}>
-                          <span style={{ color: T.accent }}>▸</span> {m}
-                        </div>
-                      ))}
+                      {b.movements.map((m, k) => {
+  const { text, url } = splitLink(m);
+  return (
+    <div key={k} style={{ fontSize: 15, fontWeight: 700, padding: "5px 0", display: "flex", gap: 8, alignItems: "center" }}>
+      <span style={{ color: T.accent }}>▸</span> {text}
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 12, fontWeight: 800, background: T.ink, color: "#fff", borderRadius: 6, padding: "3px 8px", textDecoration: "none" }}>
+          ▶ demo
+        </a>
+      )}
+    </div>
+  );
+})}
                     </div>
                     <div style={{ marginTop: 12 }}>
                       <input style={{ ...smallInput }} placeholder="Your result (time / rounds / reps)"
@@ -1319,13 +1470,17 @@ async function deleteClient(id, name) {
                       <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: T.accent, color: "#fff", borderRadius: 8, padding: "4px 10px" }}>
                         {details.length} {details.length === 1 ? "set" : "sets"}
                       </span>
-                      {ex.rest && (
+                     {ex.rest && (
                         <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
                           ⏲ EMOM {formatRest(ex.rest)}
                         </span>
                       )}
                     </div>
                   </div>
+
+                  {parseInt(ex.rest) > 0 && (
+                    <SetTimer seconds={parseInt(ex.rest)} sets={details.length} />
+                  )}
                   {last && (
                     <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
                       📈 Last time ({new Date(last.date).toLocaleDateString()}): {last.weight}
