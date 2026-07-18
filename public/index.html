@@ -494,21 +494,24 @@ function detailsToFields(details) {
 //   reps   = movements joined by " | " (e.g. "Thrusters 21 @ 40kg | Pull-ups 21")
 //   rest   = rest seconds after the block
 function isBlock(ex) {
-  return String(ex.sets || "").toLowerCase() === "block";
+  return String(ex.sets || "").toLowerCase().startsWith("block");
 }
 function decodeBlock(ex) {
+  const setsStr = String(ex.sets || "");
+  const roundsMatch = setsStr.match(/block:(\d+)/);
   return {
     title: ex.name || "Metcon",
     scheme: ex.weight || "",
     movements: String(ex.reps || "").split("|").map((s) => s.trimStart()),
     rest: ex.rest || "60",
+    rounds: roundsMatch ? roundsMatch[1] : "1",
   };
 }
 function encodeBlock(b) {
   return {
-    name: (b.title || "Metcon").trim(),
-    sets: "block",
-    weight: (b.scheme || "").trim(),
+    name: b.title || "Metcon",
+    sets: "block:" + (parseInt(b.rounds) || 1),
+    weight: b.scheme || "",
     reps: (b.movements || []).join(" | "),
     rest: b.rest || "60",
   };
@@ -964,7 +967,7 @@ async function deleteClient(id, name) {
     const movements = newBlock.movements.map((m) => m.trim()).filter(Boolean);
     if (!title || movements.length === 0) return;
     const day = currentDay();
-    const ex = encodeBlock({ title, scheme: newBlock.scheme.trim() || "For time", movements, rest: newBlock.rest || "60" });
+   const ex = encodeBlock({ title, scheme: newBlock.scheme.trim() || "For time", movements, rest: newBlock.rest || "60", rounds: newBlock.rounds || "1" });
     saveDay(weekIdx, dayIdx, day.title, [...day.exercises, ex]);
     setNewBlock({ title: "", scheme: "", rest: "", movements: [""] });
     setShowBlockForm(false);
@@ -997,6 +1000,7 @@ async function deleteClient(id, name) {
             if (field === "scheme") b.scheme = value;
             else if (field === "title") b.title = value;
             else if (field === "rest") b.rest = value;
+            else if (field === "rounds") b.rounds = value;
             else if (field === "movement") { b.movements = [...b.movements]; b.movements[movIdx] = value; }
             // encode WITHOUT trimming, so spaces you type survive
             return {
@@ -1697,12 +1701,14 @@ async function deleteClient(id, name) {
                   )}
                   {open && (
                     <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 8, marginBottom: 8 }}>
-                        <input style={{ ...smallInput }} placeholder="Scheme (AMRAP 12 min / 21-15-9 / 3 rounds)"
-                          value={b.scheme} onChange={(e) => updateBlockLocal(i, "scheme", e.target.value)} onBlur={persistCurrentDay} />
-                        <input style={{ ...smallInput }} placeholder="Rest (s)"
-                          value={b.rest} onChange={(e) => updateBlockLocal(i, "rest", e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
-                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px", gap: 8, marginBottom: 8 }}>
+  <input style={{ ...smallInput }} placeholder="Scheme (AMRAP / 21-15-9)"
+    value={b.scheme} onChange={(e) => updateBlockLocal(i, "scheme", e.target.value)} onBlur={persistCurrentDay} />
+  <input style={{ ...smallInput }} placeholder="Rounds"
+    value={b.rounds} onChange={(e) => updateBlockLocal(i, "rounds", e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
+  <input style={{ ...smallInput }} placeholder="EMOM (s)"
+    value={b.rest} onChange={(e) => updateBlockLocal(i, "rest", e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
+</div>
                       {b.movements.map((m, k) => (
                         <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
                           <input style={{ ...smallInput }} placeholder={`Movement ${k + 1} (e.g. Thrusters 21 @ 40kg)`}
@@ -1799,11 +1805,12 @@ async function deleteClient(id, name) {
             ) : (
               <div style={{ background: T.accentSoft, border: "2px solid " + T.accentDark, borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: T.accentDark, marginBottom: 10 }}>⚡ NEW METCON / CIRCUIT BLOCK</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 90px", gap: 8, marginBottom: 8 }}>
-                  <input style={{ ...smallInput }} placeholder="Block title (e.g. Metcon)" value={newBlock.title} onChange={(e) => setNewBlock({ ...newBlock, title: e.target.value })} />
-                  <input style={{ ...smallInput }} placeholder="Scheme (AMRAP 12 min / 21-15-9)" value={newBlock.scheme} onChange={(e) => setNewBlock({ ...newBlock, scheme: e.target.value })} />
-                  <input style={{ ...smallInput }} placeholder="Rest (s)" value={newBlock.rest} onChange={(e) => setNewBlock({ ...newBlock, rest: e.target.value.replace(/\D/g, "") })} />
-                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 70px 70px", gap: 8, marginBottom: 8 }}>
+  <input style={{ ...smallInput }} placeholder="Block title (e.g. Metcon)" value={newBlock.title} onChange={(e) => setNewBlock({ ...newBlock, title: e.target.value })} />
+  <input style={{ ...smallInput }} placeholder="Scheme (AMRAP / 21-15-9)" value={newBlock.scheme} onChange={(e) => setNewBlock({ ...newBlock, scheme: e.target.value })} />
+  <input style={{ ...smallInput }} placeholder="Rounds" value={newBlock.rounds || ""} onChange={(e) => setNewBlock({ ...newBlock, rounds: e.target.value.replace(/\D/g, "") })} />
+  <input style={{ ...smallInput }} placeholder="EMOM (s)" value={newBlock.rest} onChange={(e) => setNewBlock({ ...newBlock, rest: e.target.value.replace(/\D/g, "") })} />
+</div>
                 {newBlock.movements.map((m, k) => (
                   <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
                     <input style={{ ...smallInput }} placeholder={`Movement ${k + 1} (e.g. Wall balls 15 @ 9kg)`} value={m} onChange={(e) => setNewBlockMovement(k, e.target.value)} />
