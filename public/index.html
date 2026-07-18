@@ -1005,7 +1005,7 @@ async function deleteClient(id, name) {
             // encode WITHOUT trimming, so spaces you type survive
             return {
               name: b.title,
-              sets: "block",
+              sets: "block:" + (parseInt(b.rounds) || 1),
               weight: b.scheme,
               reps: b.movements.join(" | "),
               rest: b.rest || "60",
@@ -1419,15 +1419,15 @@ async function deleteClient(id, name) {
                           </span>
                         )}
                         {ex.rest && (
-                          <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
+                        <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: "#fff", color: T.ink, border: "2px solid " + T.ink, borderRadius: 8, padding: "2px 10px" }}>
                              ⏲ EMOM {formatRest(ex.rest)}
-                             {parseInt(ex.rest) > 0 && (
-  <SetTimer seconds={parseInt(ex.rest)} sets={decodeBlock(ex).rounds} />
-)}
                           </span>
                         )}
                       </div>
                     </div>
+                    {parseInt(ex.rest) > 0 && (
+                      <SetTimer seconds={parseInt(ex.rest)} sets={decodeBlock(ex).rounds} />
+                    )}
                     {last && (
                       <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
                         📈 Last time ({new Date(last.date).toLocaleDateString()}): {last.weight}
