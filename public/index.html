@@ -1074,20 +1074,21 @@ async function deleteClient(id, name) {
             exercises: dy.exercises.map((ex, ei) => {
               if (ei !== exIdx) return ex;
               const details = getSetDetails(ex).map((s, si) => (si === setIdx ? { ...s, [field]: value } : { ...s }));
-              return { ...ex, setDetails: undefined, ...detailsToFields(details) };
+              return { ...ex, setDetails: details };
             }),
           };
         }),
       };
     });
     setCoachClient({ ...coachClient, plan: { weeks } });
-  }
-
+}
   function persistCurrentDay() {
-    const day = currentDay();
-    saveDay(weekIdx, dayIdx, day.title, day.exercises);
-  }
-
+  const day = currentDay();
+  const packed = day.exercises.map((ex) =>
+    ex.setDetails ? (({ setDetails, ...rest }) => ({ ...rest, ...detailsToFields(setDetails) }))(ex) : ex
+  );
+  saveDay(weekIdx, dayIdx, day.title, packed, false);
+}
   function renameDay(title) {
     const weeks = coachClient.plan.weeks.map((wk, wi) =>
       wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, title })) }
