@@ -674,8 +674,8 @@ function PlanJinji() {
   const [earnedXP, setEarnedXP] = useState(0);
   const [leveledUpTo, setLeveledUpTo] = useState(0);
   const [levelMsg, setLevelMsg] = useState("");
-  const [selectedDay, setSelectedDay] = useState(0);
-  const [selectedWeek, setSelectedWeek] = useState(0);
+  const [viewDay, setViewDay] = useState(0);
+  const [viewWeek, setViewWeek] = useState(0);
 
   const [pinInput, setPinInput] = useState("");
   const [coachPin, setCoachPin] = useState("");
@@ -730,8 +730,8 @@ function PlanJinji() {
       setClientPin(s.pin);
       setClientId(record.id);
       const w = Math.min(record.progress.week, NUM_WEEKS - 1);
-      setSelectedWeek(w);
-      setSelectedDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
+      setViewWeek(w);
+      setViewDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
       setScreen("client");
     } catch (e) {
       localStorage.removeItem("pj-session");
@@ -741,9 +741,9 @@ function PlanJinji() {
   // restore per-exercise saved weights/comments for the *selected* week & day
   useEffect(() => {
     if (!client || screen !== "client") return;
-    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const w = Math.min(viewWeek, NUM_WEEKS - 1);
     const weekDays = client.plan.weeks[w].days;
-    const d = Math.min(selectedDay, weekDays.length - 1);
+    const d = Math.min(viewDay, weekDays.length - 1);
     const newWeights = {};
     const newComments = {};
     const newSaved = {};
@@ -762,7 +762,7 @@ function PlanJinji() {
     setComments(newComments);
     setSavedExercises(newSaved);
     setPraise({});
-  }, [client, selectedWeek, selectedDay, screen]);
+  }, [client, viewWeek, viewDay, screen]);
 
   function persistSession(record, pin) {
     localStorage.setItem("pj-session", JSON.stringify({ record, pin }));
@@ -778,8 +778,8 @@ function PlanJinji() {
   function enterClientSpace(record, pin) {
     setClient(record); setClientPin(pin); setClientId(record.id);
     const w = Math.min(record.progress.week, NUM_WEEKS - 1);
-    setSelectedWeek(w);
-    setSelectedDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
+    setViewWeek(w);
+    setViewDay(Math.min(record.progress.day, (record.plan.weeks[w]?.days.length || 1) - 1));
     setComments({}); setWeightsUsed({}); setSavedExercises({}); setPraise({}); setSessionNote("");
     setSaved(false); setEarnedXP(0); setLeveledUpTo(0);
     persistSession(record, pin);
@@ -841,9 +841,9 @@ function PlanJinji() {
   }
 
   function saveExercise(i) {
-    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const w = Math.min(viewWeek, NUM_WEEKS - 1);
     const weekDays = client.plan.weeks[w].days;
-    const d = Math.min(selectedDay, weekDays.length - 1);
+    const d = Math.min(viewDay, weekDays.length - 1);
     localStorage.setItem(
       `pj-exercise-${client.id}-${w}-${d}-${i}`,
       JSON.stringify({ weights: weightsUsed[i] || [], comment: comments[i] || "" })
@@ -1340,9 +1340,9 @@ function updateRest(exIdx, value) {
     const progressWeekDays = client.plan.weeks[progressW].days;
     const progressD = Math.min(client.progress.day, progressWeekDays.length - 1);
 
-    const w = Math.min(selectedWeek, NUM_WEEKS - 1);
+    const w = Math.min(viewWeek, NUM_WEEKS - 1);
     const weekDays = client.plan.weeks[w].days;
-    const d = Math.min(selectedDay, weekDays.length - 1);
+    const d = Math.min(viewDay, weekDays.length - 1);
     const day = weekDays[d];
     const isCurrentWorkout = w === progressW && d === progressD;
     const exercises = day.exercises || [];
@@ -1376,12 +1376,6 @@ function updateRest(exIdx, value) {
             <div style={{ ...displayStyle, fontSize: 22, color: T.good, marginBottom: 6 }}>Program complete! 🏆</div>
             <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>You finished all 5 weeks. Your coach will load the next block.</p>
           </Card>
-        ) : exercises.length === 0 ? (
-          <Card>
-            <Mascot mood="wait" />
-            <div style={{ ...displayStyle, fontSize: 20, marginBottom: 6 }}>No plan yet</div>
-            <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>Your coach has your details and is building your workout. Check back soon.</p>
-          </Card>
         ) : saved ? (
           <Card>
             <Mascot mood="done" />
@@ -1409,8 +1403,8 @@ function updateRest(exIdx, value) {
               <Btn small kind="ghost" onClick={() => {
                 setSaved(false); setEarnedXP(0); setLeveledUpTo(0); setSessionNote("");
                 const nw = Math.min(client.progress.week, NUM_WEEKS - 1);
-                setSelectedWeek(nw);
-                setSelectedDay(Math.min(client.progress.day, client.plan.weeks[nw].days.length - 1));
+                setViewWeek(nw);
+                setViewDay(Math.min(client.progress.day, client.plan.weeks[nw].days.length - 1));
               }}>
                 See what's next →
               </Btn>
@@ -1418,24 +1412,33 @@ function updateRest(exIdx, value) {
           </Card>
         ) : (
           <div>
-            <Mascot mood="go" />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-              <Btn small kind="ghost" disabled={w === 0} onClick={() => { setSelectedWeek(w - 1); setSelectedDay(0); }}>
-                ◀ Previous week
-              </Btn>
-              <SectionLabel>Week {w + 1} of {NUM_WEEKS}</SectionLabel>
-              <Btn small kind="ghost" disabled={w === NUM_WEEKS - 1} onClick={() => { setSelectedWeek(w + 1); setSelectedDay(0); }}>
-                Next week ▶
-              </Btn>
+            <Mascot mood={exercises.length === 0 ? "wait" : "go"} />
+
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              {Array.from({ length: NUM_WEEKS }, (_, wi) => (
+                <Tab key={wi} active={wi === w} onClick={() => { setViewWeek(wi); setViewDay(0); }}>
+                  Week {wi + 1}{wi === progressW ? " ·" : ""}
+                </Tab>
+              ))}
             </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid " + T.line }}>
+              {weekDays.map((dy, di) => (
+                <Tab key={di} active={di === d} onClick={() => setViewDay(di)}>
+                  {di + 1}. {dy.title || `Workout ${di + 1}`} {dy.exercises.length ? `(${dy.exercises.length})` : "·"}
+                </Tab>
+              ))}
+            </div>
+
+            {exercises.length === 0 ? (
+              <Card>
+                <div style={{ ...displayStyle, fontSize: 20, marginBottom: 6 }}>Nothing here yet</div>
+                <p style={{ color: T.sub, fontSize: 15, margin: 0 }}>Coach hasn't built this one yet.</p>
+              </Card>
+            ) : (<>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 10 }}>
-                <Btn small kind="ghost" disabled={d === 0} onClick={() => setSelectedDay(d - 1)}>◀ Previous</Btn>
-                <SectionLabel>
-                  Week {w + 1} · Workout {d + 1} of {weekDays.length}{day.title ? ` · ${day.title}` : ""}
-                </SectionLabel>
-                <Btn small kind="ghost" disabled={d === weekDays.length - 1} onClick={() => setSelectedDay(d + 1)}>Next ▶</Btn>
-              </div>
+              <SectionLabel>
+                Week {w + 1} · Workout {d + 1} of {weekDays.length}{day.title ? ` · ${day.title}` : ""}
+              </SectionLabel>
               <span style={{ fontSize: 13, fontWeight: 800, color: T.sub }}>⏱ ~{estMin} min total</span>
             </div>
 
@@ -1574,6 +1577,7 @@ function updateRest(exIdx, value) {
                 {busy ? "Saving…" : isCurrentWorkout ? "Finish & send to coach" : "Preview only — finish workouts in order"}
               </Btn>
             </Card>
+            </>)}
           </div>
         )}
 
