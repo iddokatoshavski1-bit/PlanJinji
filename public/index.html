@@ -936,14 +936,13 @@ async function deleteClient(id, name) {
     if (coachClient && coachClient.id === id) setCoachClient(null);
   } catch (e) { setError(e.message); }
 }
-  async function saveDay(w, d, title, exercises) {
+  async function saveDay(w, d, title, exercises, refresh = true) {
   try {
-    await api(`/coach/client/${coachClient.id}/day`, {
+    const c = await api(`/coach/client/${coachClient.id}/day`, {
       method: "PUT", headers: coachHeaders(),
       body: { week: w, day: d, title, exercises },
     });
-    // don't overwrite local state with the server echo — our local copy is already correct,
-    // and overwriting mid-edit is what snaps your typing back
+    if (refresh) setCoachClient(c);
   } catch (e) { setError(e.message); }
 }
   function currentDay() {
