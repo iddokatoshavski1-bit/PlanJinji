@@ -529,10 +529,11 @@ function blockMinutes(ex) {
 function estimateMinutes(exercises) {
   let sec = 0;
   for (const ex of exercises) {
-    if (isBlock(ex)) {
-      sec += (parseInt(ex.rest) || 0);
-      continue;
-    }
+   if (isBlock(ex)) {
+  const rounds = parseInt(decodeBlock(ex).rounds) || 1;
+  sec += (parseInt(ex.rest) || 0) * rounds;
+  continue;
+}
     const sets = getSetDetails(ex).length;
     const rest = parseInt(ex.rest) || 0;
     sec += sets * rest;
