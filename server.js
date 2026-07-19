@@ -69,8 +69,21 @@ async function initDb() {
     weight_used TEXT,
     comment TEXT
   )`);
+  // In-progress weights/comments the athlete has entered but not finished yet — persisted server-side
+  // (not localStorage) so they follow the athlete across devices and the coach can see them too.
+  await q(`CREATE TABLE IF NOT EXISTS exercise_drafts (
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    week INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    weights TEXT,
+    comment TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (client_id, week, day, position)
+  )`);
   // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates a column — patch those in explicitly.
   await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`);
+  await q(`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS link TEXT`);
 
   const r = await q("SELECT value FROM settings WHERE key = 'coach_pin'");
   if (r.rows.length === 0)
@@ -107,6 +120,7 @@ async function assemblePlan(id, freq) {
   const exRows = (
     await q("SELECT * FROM exercises WHERE client_id = $1 ORDER BY week, day, position", [id])
   ).rows;
+  const draftRows = (await q("SELECT * FROM exercise_drafts WHERE client_id = $1", [id])).rows;
   const weeks = [];
   for (let w = 0; w < NUM_WEEKS; w++) {
     const maxBuiltDay = exRows.reduce((m, r) => (r.week === w && r.day + 1 > m ? r.day + 1 : m), 0);
@@ -118,12 +132,27 @@ async function assemblePlan(id, freq) {
         title: (dr && dr.title) || `Workout ${d + 1}`,
         exercises: exRows
           .filter((r) => r.week === w && r.day === d)
-          .map((r) => ({ name: r.name, sets: r.sets, reps: r.reps, weight: r.weight, rest: r.rest })),
+          .map((r, position) => {
+            const draft = draftRows.find((x) => x.week === w && x.day === d && x.position === position);
+            return {
+              name: r.name, sets: r.sets, reps: r.reps, weight: r.weight, rest: r.rest, link: r.link || "",
+              draft: draft ? { weights: safeParseArr(draft.weights), comment: draft.comment || "" } : null,
+            };
+          }),
       });
     }
     weeks.push({ days });
   }
   return { weeks };
+}
+function safeParseArr(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 async function assembleLogs(id) {
@@ -182,14 +211,16 @@ async function replaceDay(clientId, week, day, title, exercises) {
     [clientId, week, day, String(title || `Workout ${day + 1}`)]
   );
   await q("DELETE FROM exercises WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
+  // exercise positions are about to be rebuilt from scratch — any draft keyed to the old positions is now stale
+  await q("DELETE FROM exercise_drafts WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
   const list = exercises || [];
   for (let i = 0; i < list.length; i++) {
     const ex = list[i];
     const name = String(ex.name || "").trim();
     if (!name) continue;
     await q(
-      "INSERT INTO exercises (client_id, week, day, position, name, sets, reps, weight, rest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [clientId, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90")]
+      "INSERT INTO exercises (client_id, week, day, position, name, sets, reps, weight, rest, link) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+      [clientId, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"), String(ex.link || "").trim()]
     );
   }
 }
@@ -273,6 +304,25 @@ app.get("/api/client/:id", wrap(clientAuth), wrap(async (req, res) => {
   res.json(await fullClient(req.params.id));
 }));
 
+// Save an in-progress weight/comment for one exercise, before the whole session is finished.
+// Persisted server-side (not localStorage) so it follows the athlete to any device and the
+// coach can see it too, whenever they open this client.
+app.put("/api/client/:id/draft", wrap(clientAuth), wrap(async (req, res) => {
+  const c = req.clientRow;
+  const { week, day, position, weights, comment } = req.body || {};
+  const w = parseInt(week), d = parseInt(day), pos = parseInt(position);
+  if (!Number.isFinite(w) || w < 0 || w >= NUM_WEEKS || !Number.isFinite(d) || d < 0 || !Number.isFinite(pos) || pos < 0)
+    return res.status(400).json({ error: "Invalid exercise reference." });
+  await q(
+    `INSERT INTO exercise_drafts (client_id, week, day, position, weights, comment, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (client_id, week, day, position)
+     DO UPDATE SET weights = excluded.weights, comment = excluded.comment, updated_at = excluded.updated_at`,
+    [c.id, w, d, pos, JSON.stringify(Array.isArray(weights) ? weights : []), String(comment || "").trim(), new Date().toISOString()]
+  );
+  res.json(await fullClient(c.id));
+}));
+
 // Athlete edits their own goals/frequency/equipment. Lowering frequency only clears
 // the empty overflow day slots — anything the coach already built stays put and stays visible.
 app.put("/api/client/:id/profile", wrap(clientAuth), wrap(async (req, res) => {
@@ -311,15 +361,23 @@ app.put("/api/client/:id/profile", wrap(clientAuth), wrap(async (req, res) => {
   res.json(await fullClient(c.id));
 }));
 
-// Finish a session: log feedback + weights, advance to next workout
+// Finish a session: log feedback + weights, advance to next workout.
+// The athlete can finish ANY built workout, not just the one their progress pointer is
+// sitting on — logging an earlier day never rewinds progress, and logging the current
+// or a later day moves the pointer to right after it.
 app.post("/api/client/:id/finish", wrap(clientAuth), wrap(async (req, res) => {
   const c = req.clientRow;
   if (c.progress_week >= NUM_WEEKS) return res.status(400).json({ error: "Program already complete." });
   const { entries, sessionNote } = req.body || {};
 
+  const bodyWeek = parseInt(req.body && req.body.week);
+  const bodyDay = parseInt(req.body && req.body.day);
+  const w = Number.isFinite(bodyWeek) ? Math.max(0, Math.min(NUM_WEEKS - 1, bodyWeek)) : c.progress_week;
+  const d = Number.isFinite(bodyDay) ? Math.max(0, bodyDay) : c.progress_day;
+
   const ins = await q(
     "INSERT INTO session_logs (client_id, date, week, day, session_note) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-    [c.id, new Date().toISOString(), c.progress_week + 1, c.progress_day + 1, String(sessionNote || "").trim()]
+    [c.id, new Date().toISOString(), w + 1, d + 1, String(sessionNote || "").trim()]
   );
   const logId = ins.rows[0].id;
 
@@ -330,9 +388,17 @@ app.post("/api/client/:id/finish", wrap(clientAuth), wrap(async (req, res) => {
     );
   }
 
-  // advance the pointer
-  let nw = c.progress_week, nd = c.progress_day + 1;
-  if (nd >= c.frequency) { nd = 0; nw += 1; }
+  // the workout is now permanently logged — clear its in-progress drafts
+  await q("DELETE FROM exercise_drafts WHERE client_id = $1 AND week = $2 AND day = $3", [c.id, w, d]);
+
+  // advance the pointer — only forward, never backward
+  const finishedFlat = w * c.frequency + d;
+  const currentFlat = c.progress_week * c.frequency + c.progress_day;
+  let nw = c.progress_week, nd = c.progress_day;
+  if (finishedFlat >= currentFlat) {
+    nw = w; nd = d + 1;
+    if (nd >= c.frequency) { nd = 0; nw += 1; }
+  }
   await q("UPDATE clients SET progress_week = $1, progress_day = $2, xp = COALESCE(xp, 0) + 250 WHERE id = $3", [nw, nd, c.id]);
 
   res.json(await fullClient(c.id));

@@ -845,7 +845,7 @@ function PlanJinji() {
   const [weekIdx, setWeekIdx] = useState(0);
   const [dayIdx, setDayIdx] = useState(0);
   const [expandedEx, setExpandedEx] = useState(null);
-  const [newEx, setNewEx] = useState({ name: "", sets: "", reps: "", weight: "", rest: "" });
+  const [newEx, setNewEx] = useState({ name: "", sets: "", reps: "", weight: "", rest: "", link: "" });
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [newBlock, setNewBlock] = useState({ title: "", scheme: "", rest: "", movements: [""] });
 
@@ -899,31 +899,35 @@ function PlanJinji() {
     }
   }, []);
 
-  // restore per-exercise saved weights/comments for the *selected* week & day
+  // restore per-exercise weights/comments for the *selected* week & day from the athlete's
+  // server-side drafts — not localStorage, so the same draft follows them to any device and
+  // is visible to the coach too.
+  // Keyed only on navigation (not on `client`) so saving one exercise's draft doesn't wipe
+  // another exercise's still-unsaved typed value on the same screen — it's read via a ref so
+  // it still always sees the latest client data whenever the athlete actually navigates.
+  const clientRef = useRef(client);
+  clientRef.current = client;
   useEffect(() => {
-    if (!client || screen !== "client") return;
+    const c = clientRef.current;
+    if (!c || screen !== "client") return;
     const w = Math.min(viewWeek, NUM_WEEKS - 1);
-    const weekDays = client.plan.weeks[w].days;
+    const weekDays = c.plan.weeks[w].days;
     const d = Math.min(viewDay, weekDays.length - 1);
     const newWeights = {};
     const newComments = {};
     const newSaved = {};
     weekDays[d].exercises.forEach((ex, i) => {
-      const savedEx = localStorage.getItem(`pj-exercise-${client.id}-${w}-${d}-${i}`);
-      if (savedEx) {
-        try {
-          const parsed = JSON.parse(savedEx);
-          newWeights[i] = Array.isArray(parsed.weights) ? parsed.weights : (parsed.weight ? [parsed.weight] : []);
-          newComments[i] = parsed.comment || "";
-          newSaved[i] = true;
-        } catch (e) { /* ignore corrupt entry */ }
+      if (ex.draft && (ex.draft.weights.length || ex.draft.comment)) {
+        newWeights[i] = ex.draft.weights;
+        newComments[i] = ex.draft.comment;
+        newSaved[i] = true;
       }
     });
     setWeightsUsed(newWeights);
     setComments(newComments);
     setSavedExercises(newSaved);
     setPraise({});
-  }, [client, viewWeek, viewDay, screen]);
+  }, [viewWeek, viewDay, screen]);
 
   function persistSession(record, pin) {
     localStorage.setItem("pj-session", JSON.stringify({ record, pin }));
@@ -1026,34 +1030,43 @@ function PlanJinji() {
     setSavedExercises({ ...savedExercises, [exIdx]: false });
   }
 
-  function saveExercise(i) {
+  // saved server-side (not localStorage), so it follows the athlete across devices and the
+  // coach can see it too, whenever they open this client — not just after a full Finish.
+  async function saveExercise(i) {
     const w = Math.min(viewWeek, NUM_WEEKS - 1);
     const weekDays = client.plan.weeks[w].days;
     const d = Math.min(viewDay, weekDays.length - 1);
-    localStorage.setItem(
-      `pj-exercise-${client.id}-${w}-${d}-${i}`,
-      JSON.stringify({ weights: weightsUsed[i] || [], comment: comments[i] || "" })
-    );
-    setSavedExercises({ ...savedExercises, [i]: true });
-    const firstName = (client.profile.name || "").trim().split(" ")[0];
-    const msg = pickPraise(firstName);
-    setPraise((p) => ({ ...p, [i]: msg }));
-    setTimeout(() => setPraise((p) => {
-      const copy = { ...p }; delete copy[i]; return copy;
-    }), 3500);
+    try {
+      const record = await api(`/client/${clientId}/draft`, {
+        method: "PUT", headers: clientHeaders(),
+        body: { week: w, day: d, position: i, weights: weightsUsed[i] || [], comment: comments[i] || "" },
+      });
+      setClient(record);
+      persistSession(record, clientPin);
+      setSavedExercises((s) => ({ ...s, [i]: true }));
+      const firstName = (client.profile.name || "").trim().split(" ")[0];
+      const msg = pickPraise(firstName);
+      setPraise((p) => ({ ...p, [i]: msg }));
+      setTimeout(() => setPraise((p) => {
+        const copy = { ...p }; delete copy[i]; return copy;
+      }), 3500);
+    } catch (e) { setError(e.message); }
   }
   
   async function handleFinishSession() {
     setBusy(true); setError("");
     try {
-      const w = Math.min(client.progress.week, NUM_WEEKS - 1);
-      const d = Math.min(client.progress.day, client.plan.weeks[w].days.length - 1);
-      const exercises = client.plan.weeks[w].days[d].exercises;
+      const w = Math.min(viewWeek, NUM_WEEKS - 1);
+      const weekDays = client.plan.weeks[w].days;
+      const d = Math.min(viewDay, weekDays.length - 1);
+      const exercises = weekDays[d].exercises;
       const prevXp = getXP(client.logs);
 
       const record = await api(`/client/${clientId}/finish`, {
         method: "POST", headers: clientHeaders(),
         body: {
+          week: w,
+          day: d,
           entries: exercises.map((ex, i) => {
             if (isBlock(ex)) {
               const res = (weightsUsed[i] || [])[0] || "";
@@ -1143,9 +1156,9 @@ async function deleteClient(id, name) {
     const day = currentDay();
     const setCount = Math.max(1, parseInt(newEx.sets) || 3);
     const details = Array.from({ length: setCount }, () => ({ reps: newEx.reps || "", weight: newEx.weight || "" }));
-    const exercise = { name: newEx.name.trim(), rest: newEx.rest || "90", ...detailsToFields(details) };
+    const exercise = { name: newEx.name.trim(), rest: newEx.rest || "90", link: newEx.link.trim(), ...detailsToFields(details) };
     saveDay(weekIdx, dayIdx, day.title, [...day.exercises, exercise]);
-    setNewEx({ name: "", sets: "", reps: "", weight: "", rest: "" });
+    setNewEx({ name: "", sets: "", reps: "", weight: "", rest: "", link: "" });
   }
 
   // ----- metcon / block builder -----
@@ -1301,6 +1314,15 @@ function removeSet(exIdx, setIdx) {
 function updateRest(exIdx, value) {
   const day = currentDay();
   const exercises = day.exercises.map((ex, ei) => (ei !== exIdx ? ex : { ...ex, rest: value }));
+  const weeks = coachClient.plan.weeks.map((wk, wi) =>
+    wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
+  );
+  setCoachClient({ ...coachClient, plan: { weeks } });
+}
+// renames an exercise, or edits its demo link — same local-edit-then-blur-persists pattern as updateRest
+function updateExerciseField(exIdx, field, value) {
+  const day = currentDay();
+  const exercises = day.exercises.map((ex, ei) => (ei !== exIdx ? ex : { ...ex, [field]: value }));
   const weeks = coachClient.plan.weeks.map((wk, wi) =>
     wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
   );
@@ -1745,7 +1767,15 @@ function updateRest(exIdx, value) {
               return (
                 <Card key={i} style={{ marginBottom: 14, padding: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-                    <div style={{ ...displayStyle, fontSize: 18 }}>{ex.name}</div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ ...displayStyle, fontSize: 18 }}>{ex.name}</div>
+                      {ex.link && (
+                        <a href={ex.link} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 12, fontWeight: 800, background: T.ink, color: "#fff", borderRadius: 6, padding: "3px 8px", textDecoration: "none" }}>
+                          ▶ demo
+                        </a>
+                      )}
+                    </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 14, background: T.accent, color: "#fff", borderRadius: 8, padding: "4px 10px" }}>
                         {details.length} {details.length === 1 ? "set" : "sets"}
@@ -1806,8 +1836,8 @@ function updateRest(exIdx, value) {
                 <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={sessionNote}
                   onChange={(e) => setSessionNote(e.target.value)} placeholder="Energy, soreness, anything the coach should know…" />
               </Field>
-              <Btn kind="accent" onClick={handleFinishSession} disabled={busy || !isCurrentWorkout}>
-                {busy ? "Saving…" : isCurrentWorkout ? "Finish & send to coach" : "Preview only — finish workouts in order"}
+              <Btn kind="accent" onClick={handleFinishSession} disabled={busy}>
+                {busy ? "Saving…" : isCurrentWorkout ? "Finish & send to coach" : "Finish this workout"}
               </Btn>
             </Card>
             </>)}
@@ -1976,6 +2006,11 @@ function updateRest(exIdx, value) {
                       📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
                     </div>
                   )}
+                  {ex.draft && (ex.draft.weights.some(Boolean) || ex.draft.comment) && (
+                    <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accent }}>
+                      📝 In progress: {ex.draft.weights.map((v) => v || "—").join(" / ") || "—"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
+                    </div>
+                  )}
                   {open && (
                     <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px", gap: 8, marginBottom: 8 }}>
@@ -2009,7 +2044,13 @@ function updateRest(exIdx, value) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                   <div style={{ fontSize: 14 }}>
                     <strong>{ex.name}</strong>{" "}
-                    <span style={{ color: T.sub }}>{details.length} sets{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
+                    <span style={{ color: T.sub }}>{details.length} sets{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>{" "}
+                    {ex.link && (
+                      <a href={ex.link} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, fontWeight: 800, background: T.ink, color: "#fff", borderRadius: 6, padding: "2px 7px", textDecoration: "none" }}>
+                        🔗 link
+                      </a>
+                    )}
                   </div>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
   <button onClick={() => moveExercise(i, -1)} title="Move up" style={{ background: "none", border: "none", color: T.ink, cursor: "pointer", fontWeight: 900, fontSize: 15 }}>↑</button>
@@ -2033,8 +2074,19 @@ function updateRest(exIdx, value) {
                     📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
                   </div>
                 )}
+                {ex.draft && (ex.draft.weights.some(Boolean) || ex.draft.comment) && (
+                  <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accent }}>
+                    📝 In progress: {ex.draft.weights.map((v) => v || "—").join(" / ") || "—"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
+                  </div>
+                )}
                 {open && (
                   <div style={{ marginTop: 8, background: T.bg, border: "1px solid " + T.line, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                      <input style={{ ...smallInput }} placeholder="Exercise name" value={ex.name}
+                        onChange={(e) => updateExerciseField(i, "name", e.target.value)} onBlur={persistCurrentDay} />
+                      <input style={{ ...smallInput }} placeholder="Demo link (optional, https://…)" value={ex.link || ""}
+                        onChange={(e) => updateExerciseField(i, "link", e.target.value)} onBlur={persistCurrentDay} />
+                    </div>
                    {details.map((s, j) => (
                       <div key={j} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 30px", gap: 8, alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink, borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>SET {j + 1}</span>
@@ -2075,6 +2127,8 @@ function updateRest(exIdx, value) {
               <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Weight" value={newEx.weight} onChange={(e) => setNewEx({ ...newEx, weight: e.target.value })} />
               <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} placeholder="Rest (s)" value={newEx.rest} onChange={(e) => setNewEx({ ...newEx, rest: e.target.value.replace(/\D/g, "") })} />
             </div>
+            <input style={{ ...inputStyle, padding: "8px 10px", fontSize: 13, marginTop: 8 }} placeholder="Demo link (optional, https://…) — keep this out of the exercise name"
+              value={newEx.link} onChange={(e) => setNewEx({ ...newEx, link: e.target.value })} />
             <div style={{ fontSize: 12, color: T.sub, marginTop: 6 }}>
               Adds with sets + reps + weight as defaults, then use <strong>edit sets</strong> to fine-tune each set (pyramid: 10@40, 8@50, 6@60, 4@70).
             </div>
