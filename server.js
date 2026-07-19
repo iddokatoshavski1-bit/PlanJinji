@@ -69,6 +69,9 @@ async function initDb() {
     weight_used TEXT,
     comment TEXT
   )`);
+  // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates a column — patch those in explicitly.
+  await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`);
+
   const r = await q("SELECT value FROM settings WHERE key = 'coach_pin'");
   if (r.rows.length === 0)
     await q("INSERT INTO settings (key, value) VALUES ('coach_pin', $1)", [DEFAULT_COACH_PIN]);

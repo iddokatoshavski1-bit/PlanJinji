@@ -62,6 +62,26 @@ const PRAISE = [
   "Another brick in the muscle wall!", "That set didn't stand a chance!", "Iron: defeated. ⚔️",
 ];
 
+// same lines, personalized — mixed in some of the time (not every time) when we know their name
+const PRAISE_WITH_NAME = [
+  (n) => `Good job, ${n}! 💪`,
+  (n) => `That's the way to do it, ${n}!`,
+  (n) => `Beast mode: ON, ${n}! 🔥`,
+  (n) => `${n}, logged like a pro!`,
+  (n) => `Strong move, ${n}!`,
+  (n) => `${n}, the plates are shaking!`,
+  (n) => `Coach is gonna love this, ${n}!`,
+  (n) => `${n}, that set didn't stand a chance!`,
+];
+
+function pickPraise(firstName) {
+  if (firstName && Math.random() < 0.4) {
+    const fn = PRAISE_WITH_NAME[Math.floor(Math.random() * PRAISE_WITH_NAME.length)];
+    return fn(firstName);
+  }
+  return PRAISE[Math.floor(Math.random() * PRAISE.length)];
+}
+
 const LEVELUP_PHRASES = [
   "One step closer to unstoppable! 🚀",
   "Soon they'll write legends about you! 📜",
@@ -423,10 +443,13 @@ function SetTimer({ seconds, sets, label }) {
   const [left, setLeft] = useState(per);
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [prep, setPrep] = useState(0); // 3..1 "get ready" countdown before the very first set starts
 
   const deadline = useRef(null);
   const setNoRef = useRef(1);
   const ctxRef = useRef(null);
+  const warnRef = useRef(0); // last countdown second we already beeped for, so we don't re-beep on every 200ms tick
+  const beganRef = useRef(false); // true once the first set has actually started counting down
 
   // iOS only allows audio created/resumed inside a real tap, so we make the
   // AudioContext on the first Start press and reuse it for every later beep.
@@ -453,20 +476,44 @@ function SetTimer({ seconds, sets, label }) {
     } catch (e) { /* ignore */ }
   }
 
+  // "get ready" countdown — runs once before the very first set, then hands off to the real timer
+  useEffect(() => {
+    if (prep <= 0) return;
+    beep(prep === 1);                                  // beep, beep, beeeep on the last tick
+    const t = setTimeout(() => {
+      if (prep === 1) {
+        setPrep(0);
+        warnRef.current = 0;
+        beganRef.current = true;
+        deadline.current = Date.now() + per * 1000;
+        setRunning(true);
+      } else {
+        setPrep(prep - 1);
+      }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [prep, per]);
+
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => {
       const rem = Math.round((deadline.current - Date.now()) / 1000);
-      if (rem > 0) { setLeft(rem); return; }
+      if (rem > 0) {
+        setLeft(rem);
+        if (rem <= 3 && warnRef.current !== rem) {      // beep, beep, beeeep — 3 seconds warning before the set changes
+          warnRef.current = rem;
+          beep(rem === 1);
+        }
+        return;
+      }
 
       if (setNoRef.current < total) {
-        beep(false);                                   // set done → next set
         setNoRef.current += 1;
         setSetNo(setNoRef.current);
         deadline.current = Date.now() + per * 1000;
         setLeft(per);
+        warnRef.current = 0;
       } else {
-        beep(true);                                    // all sets done
         clearInterval(id);
         setRunning(false);
         setFinished(true);
@@ -478,19 +525,23 @@ function SetTimer({ seconds, sets, label }) {
 
   function start() {
     ensureAudio();
-    if (finished) {                                    // restart from set 1
+    const isFreshStart = finished || !beganRef.current;
+    if (isFreshStart) {                                 // first set (or restarting from the top) — 3s "get ready" first
       setNoRef.current = 1; setSetNo(1); setLeft(per); setFinished(false);
-      deadline.current = Date.now() + per * 1000;
-      setRunning(true);
+      warnRef.current = 0;
+      beganRef.current = false;
+      setPrep(3);
       return;
     }
-    deadline.current = Date.now() + left * 1000;       // resume from where paused
+    deadline.current = Date.now() + left * 1000;        // resume from where paused
     setRunning(true);
   }
 
   function reset() {
-    setRunning(false); setFinished(false);
+    setRunning(false); setFinished(false); setPrep(0);
     setNoRef.current = 1; setSetNo(1); setLeft(per);
+    warnRef.current = 0;
+    beganRef.current = false;
   }
 
   function skip() {
@@ -499,6 +550,7 @@ function SetTimer({ seconds, sets, label }) {
       setSetNo(setNoRef.current);
       deadline.current = Date.now() + per * 1000;
       setLeft(per);
+      warnRef.current = 0;
     } else {
       setRunning(false); setFinished(true); setLeft(0);
     }
@@ -516,11 +568,11 @@ function SetTimer({ seconds, sets, label }) {
         <span style={{
           fontFamily: fontStack, fontWeight: 900, fontSize: 30, letterSpacing: "-0.02em",
           color: finished ? T.good : T.ink, minWidth: 92,
-        }}>{mm}:{ss}</span>
+        }}>{prep > 0 ? prep : `${mm}:${ss}`}</span>
 
         <div style={{ flex: 1, minWidth: 90 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: T.sub, marginBottom: 4 }}>
-            {finished ? "ALL SETS DONE 🏆" : `SET ${setNo} OF ${total}`}
+            {prep > 0 ? "GET READY…" : finished ? "ALL SETS DONE 🏆" : `SET ${setNo} OF ${total}`}
             {label ? ` · ${label}` : ""}
           </div>
           <div style={{ display: "flex", gap: 4 }}>
@@ -534,11 +586,11 @@ function SetTimer({ seconds, sets, label }) {
         </div>
 
         <div style={{ display: "flex", gap: 6 }}>
-          <Btn small kind={running ? "ghost" : "accent"}
+          <Btn small kind={running ? "ghost" : "accent"} disabled={prep > 0}
             onClick={() => (running ? setRunning(false) : start())}>
-            {running ? "⏸" : finished ? "↺ Again" : "▶ Start"}
+            {running ? "⏸" : prep > 0 ? `${prep}…` : finished ? "↺ Again" : "▶ Start"}
           </Btn>
-          {!finished && <Btn small kind="ghost" onClick={skip}>⏭</Btn>}
+          {!finished && <Btn small kind="ghost" onClick={skip} disabled={prep > 0}>⏭</Btn>}
           <Btn small kind="ghost" onClick={reset}>↺</Btn>
         </div>
       </div>
@@ -983,7 +1035,8 @@ function PlanJinji() {
       JSON.stringify({ weights: weightsUsed[i] || [], comment: comments[i] || "" })
     );
     setSavedExercises({ ...savedExercises, [i]: true });
-    const msg = PRAISE[Math.floor(Math.random() * PRAISE.length)];
+    const firstName = (client.profile.name || "").trim().split(" ")[0];
+    const msg = pickPraise(firstName);
     setPraise((p) => ({ ...p, [i]: msg }));
     setTimeout(() => setPraise((p) => {
       const copy = { ...p }; delete copy[i]; return copy;
