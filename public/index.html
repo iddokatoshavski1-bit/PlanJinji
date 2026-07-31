@@ -722,6 +722,26 @@ function lastWeightFor(logs, exName) {
   }
   return null;
 }
+// most recent weight the athlete themselves logged for this exercise AT THIS SAME REP COUNT —
+// e.g. today's set is 3 reps, so find the last time they did 3 reps here, even if that was
+// several weeks back and last week's sessions were all 8-rep sets. Own logged results only,
+// never the coach's prescribed target weight.
+function lastWeightForReps(logs, exName, targetReps) {
+  const target = String(exName || "").trim().toLowerCase();
+  const reps = String(targetReps || "").trim();
+  if (!reps) return null;
+  for (let i = (logs || []).length - 1; i >= 0; i--) {
+    for (const e of logs[i].entries || []) {
+      if (String(e.exercise || "").trim().toLowerCase() !== target) continue;
+      const tokens = String(e.weightUsed || "").split("/").map((t) => t.trim()).filter(Boolean);
+      for (const tok of tokens) {
+        const m = tok.match(/^(.*?)×(.+)$/);
+        if (m && m[1].trim() === reps) return { weight: m[2].trim(), date: logs[i].date };
+      }
+    }
+  }
+  return null;
+}
 // pulls a URL out of any text, returns { text, url }
 function splitLink(str) {
   const s = String(str || "");
@@ -1791,29 +1811,33 @@ function updateExerciseField(exIdx, field, value) {
                   {parseInt(ex.rest) > 0 && (
                     <SetTimer seconds={parseInt(ex.rest)} sets={details.length} />
                   )}
-                  {last && (
-                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
-                      📈 Last time ({new Date(last.date).toLocaleDateString()}): {last.weight}
-                    </div>
-                  )}
                   <div style={{ marginTop: 12, borderTop: "1px solid " + T.line }}>
-                    {details.map((s, j) => (
-                      <div key={j} style={{
-                        display: "grid", gridTemplateColumns: "auto 1fr 120px", gap: 10, alignItems: "center",
-                        padding: "8px 0", borderBottom: "1px solid " + T.line,
-                      }}>
-                        <span style={{
-                          fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink,
-                          borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap",
-                        }}>SET {j + 1}</span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: T.sub }}>
-                          {s.reps ? `${s.reps} reps` : "—"}{s.weight ? ` 🏋️ ${s.weight}` : ""}
-                        </span>
-                        <input style={{ ...smallInput }} placeholder="Weight used"
-                          value={(weightsUsed[i] || [])[j] || ""}
-                          onChange={(e) => setWeightForSet(i, j, e.target.value)} />
-                      </div>
-                    ))}
+                    {details.map((s, j) => {
+                      const repMatch = lastWeightForReps(client.logs, ex.name, s.reps);
+                      return (
+                        <div key={j} style={{ padding: "8px 0", borderBottom: "1px solid " + T.line }}>
+                          <div style={{
+                            display: "grid", gridTemplateColumns: "auto 1fr 120px", gap: 10, alignItems: "center",
+                          }}>
+                            <span style={{
+                              fontFamily: fontStack, fontWeight: 900, fontSize: 12, color: "#fff", background: T.ink,
+                              borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap",
+                            }}>SET {j + 1}</span>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: T.sub }}>
+                              {s.reps ? `${s.reps} reps` : "—"}{s.weight ? ` 🏋️ ${s.weight}` : ""}
+                            </span>
+                            <input style={{ ...smallInput }} placeholder="Weight used"
+                              value={(weightsUsed[i] || [])[j] || ""}
+                              onChange={(e) => setWeightForSet(i, j, e.target.value)} />
+                          </div>
+                          {repMatch && (
+                            <div style={{ fontSize: 12, fontWeight: 700, color: T.accentDark, marginTop: 4 }}>
+                              📈 Last time @ {s.reps} reps: {repMatch.weight} ({new Date(repMatch.date).toLocaleDateString()})
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginTop: 12 }}>
                     <input style={{ ...smallInput }} placeholder="How was it? (too heavy, easy, felt it in the knee…)"
