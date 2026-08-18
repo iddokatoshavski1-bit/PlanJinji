@@ -864,6 +864,9 @@ function PlanJinji() {
   const [coachClient, setCoachClient] = useState(null);
   const [weekIdx, setWeekIdx] = useState(0);
   const [dayIdx, setDayIdx] = useState(0);
+  const [viewingSeason, setViewingSeason] = useState(1);
+  const [viewedSeasonPlan, setViewedSeasonPlan] = useState(null);
+  const [seasonBusy, setSeasonBusy] = useState(false);
   const [expandedEx, setExpandedEx] = useState(null);
   const [newEx, setNewEx] = useState({ name: "", sets: "", reps: "", weight: "", rest: "", link: "" });
   const [showBlockForm, setShowBlockForm] = useState(false);
@@ -1143,6 +1146,8 @@ function PlanJinji() {
       setCoachClient(c);
       setWeekIdx(Math.min(c.progress.week, NUM_WEEKS - 1));
       setDayIdx(0);
+      setViewingSeason(c.season || 1);
+      setViewedSeasonPlan(null);
       setExpandedEx(null);
       setShowBlockForm(false);
     } catch (e) { setError(e.message); }
@@ -1157,11 +1162,20 @@ async function deleteClient(id, name) {
     if (coachClient && coachClient.id === id) setCoachClient(null);
   } catch (e) { setError(e.message); }
 }
+  // Any exercise edited via the per-set editor only has its changes in the local `setDetails`
+  // array until this packs them into real sets/reps/weight strings — the server only ever reads
+  // those strings, never `setDetails`. Packing here (not just in persistCurrentDay) means EVERY
+  // caller — add exercise, remove exercise, reorder, add a block, etc. — sends every OTHER
+  // exercise's latest edits too, instead of overwriting them with whatever stale strings that
+  // exercise had before it was last locally edited.
   async function saveDay(w, d, title, exercises, refresh = true) {
   try {
+    const packed = (exercises || []).map((ex) =>
+      ex.setDetails ? (({ setDetails, ...rest }) => ({ ...rest, ...detailsToFields(setDetails) }))(ex) : ex
+    );
     const c = await api(`/coach/client/${coachClient.id}/day`, {
       method: "PUT", headers: coachHeaders(),
-      body: { week: w, day: d, title, exercises },
+      body: { week: w, day: d, title, exercises: packed },
     });
     if (refresh) setCoachClient(c);
   } catch (e) { setError(e.message); }
@@ -1304,6 +1318,9 @@ async function deleteClient(id, name) {
     setCoachClient({ ...coachClient, plan: { weeks } });
 }
 
+// persists using the freshly computed `exercises` directly, rather than a separate call to
+// persistCurrentDay() right after — that would re-read coachClient from this same render's
+// stale closure, before the setCoachClient above had actually applied, and re-save the OLD data.
 function addSet(exIdx) {
   const day = currentDay();
   const exercises = day.exercises.map((ex, ei) => {
@@ -1316,6 +1333,7 @@ function addSet(exIdx) {
     wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
   );
   setCoachClient({ ...coachClient, plan: { weeks } });
+  saveDay(weekIdx, dayIdx, day.title, exercises, false);
 }
 
 function removeSet(exIdx, setIdx) {
@@ -1329,6 +1347,7 @@ function removeSet(exIdx, setIdx) {
     wi !== weekIdx ? wk : { days: wk.days.map((dy, di) => (di !== dayIdx ? dy : { ...dy, exercises })) }
   );
   setCoachClient({ ...coachClient, plan: { weeks } });
+  saveDay(weekIdx, dayIdx, day.title, exercises, false);
 }
 
 function updateRest(exIdx, value) {
@@ -1350,10 +1369,7 @@ function updateExerciseField(exIdx, field, value) {
 }
   function persistCurrentDay() {
   const day = currentDay();
-  const packed = day.exercises.map((ex) =>
-    ex.setDetails ? (({ setDetails, ...rest }) => ({ ...rest, ...detailsToFields(setDetails) }))(ex) : ex
-  );
-  saveDay(weekIdx, dayIdx, day.title, packed, false);
+  saveDay(weekIdx, dayIdx, day.title, day.exercises, false);
 }
   function renameDay(title) {
     const weeks = coachClient.plan.weeks.map((wk, wi) =>
@@ -1388,8 +1404,9 @@ function updateExerciseField(exIdx, field, value) {
   async function startNewSeason() {
     const next = (coachClient.season || 1) + 1;
     if (!window.confirm(
-      `Start Season ${next} for ${coachClient.profile.name}? This clears the current 5-week plan grid ` +
-      `and resets their progress back to Week 1. Their session history, XP, and level stay intact.`
+      `Start Season ${next} for ${coachClient.profile.name}? This opens a brand new blank 5-week plan ` +
+      `and resets their progress back to Week 1. Season ${coachClient.season || 1}'s plan stays saved — ` +
+      `you can still look back at it. Session history, XP, and level stay intact either way.`
     )) return;
     setBusy(true); setError("");
     try {
@@ -1397,9 +1414,30 @@ function updateExerciseField(exIdx, field, value) {
       setCoachClient(c);
       setWeekIdx(0);
       setDayIdx(0);
+      setViewingSeason(c.season || 1);
+      setViewedSeasonPlan(null);
       setExpandedEx(null);
     } catch (e) { setError(e.message); }
     setBusy(false);
+  }
+
+  // switching to the current season just shows the live editable plan already in coachClient;
+  // switching to a past season fetches a read-only snapshot of it
+  async function viewSeason(seasonNum) {
+    setWeekIdx(0);
+    setDayIdx(0);
+    setExpandedEx(null);
+    setViewingSeason(seasonNum);
+    if (seasonNum === (coachClient.season || 1)) {
+      setViewedSeasonPlan(null);
+      return;
+    }
+    setSeasonBusy(true); setError("");
+    try {
+      const r = await api(`/coach/client/${coachClient.id}/season/${seasonNum}`, { headers: coachHeaders() });
+      setViewedSeasonPlan(r.plan);
+    } catch (e) { setError(e.message); }
+    setSeasonBusy(false);
   }
 
   async function changeCoachPin() {
@@ -1958,8 +1996,11 @@ function updateExerciseField(exIdx, field, value) {
       );
 
     const p = coachClient.profile;
-    const week = coachClient.plan.weeks[weekIdx];
-    const day = week.days[Math.min(dayIdx, week.days.length - 1)];
+    const currentSeason = coachClient.season || 1;
+    const isCurrentSeason = viewingSeason === currentSeason;
+    const activePlan = isCurrentSeason ? coachClient.plan : viewedSeasonPlan;
+    const week = activePlan ? activePlan.weeks[weekIdx] : null;
+    const day = week ? week.days[Math.min(dayIdx, week.days.length - 1)] : null;
     const progDone = coachClient.progress.week >= NUM_WEEKS;
 
     return shell(
@@ -1996,17 +2037,32 @@ function updateExerciseField(exIdx, field, value) {
 
         <Card style={{ marginBottom: 16, padding: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-            <SectionLabel>5-week plan builder</SectionLabel>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Btn small kind="accent" onClick={aiSuggestWeek} disabled={aiBusy}>
-                {aiBusy ? "🤖 Thinking…" : "✨ AI suggest this week"}
-              </Btn>
-              {weekIdx < NUM_WEEKS - 1 && (
-                <Btn small kind="ghost" onClick={copyWeekForward} disabled={busy}>Copy → week {weekIdx + 2}</Btn>
-              )}
-            </div>
+            <SectionLabel>{isCurrentSeason ? "5-week plan builder" : `Season ${viewingSeason} (read-only)`}</SectionLabel>
+            {isCurrentSeason && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Btn small kind="accent" onClick={aiSuggestWeek} disabled={aiBusy}>
+                  {aiBusy ? "🤖 Thinking…" : "✨ AI suggest this week"}
+                </Btn>
+                {weekIdx < NUM_WEEKS - 1 && (
+                  <Btn small kind="ghost" onClick={copyWeekForward} disabled={busy}>Copy → week {weekIdx + 2}</Btn>
+                )}
+              </div>
+            )}
           </div>
 
+          {currentSeason > 1 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              {Array.from({ length: currentSeason }, (_, si) => si + 1).map((sn) => (
+                <Tab key={sn} active={sn === viewingSeason} onClick={() => viewSeason(sn)}>
+                  Season {sn}{sn === currentSeason ? " (current)" : ""}
+                </Tab>
+              ))}
+            </div>
+          )}
+
+          {!week ? (
+            <p style={{ color: T.sub, fontSize: 14 }}>{seasonBusy ? "Loading…" : "Nothing built for this season."}</p>
+          ) : (<>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
             {Array.from({ length: NUM_WEEKS }, (_, wi) => (
               <Tab key={wi} active={wi === weekIdx} onClick={() => { setWeekIdx(wi); setDayIdx(0); setExpandedEx(null); }}>
@@ -2021,6 +2077,50 @@ function updateExerciseField(exIdx, field, value) {
               </Tab>
             ))}
           </div>
+
+          {!isCurrentSeason ? (
+            day.exercises.length === 0 ? (
+              <p style={{ color: T.sub, fontSize: 14 }}>Nothing was built for this workout.</p>
+            ) : (
+              day.exercises.map((ex, i) => {
+                if (isBlock(ex)) {
+                  const b = decodeBlock(ex);
+                  return (
+                    <div key={i} style={{ borderBottom: "1px solid " + T.line, padding: "8px 0" }}>
+                      <div style={{ fontSize: 14 }}>
+                        <span style={{ fontFamily: fontStack, fontWeight: 900, fontSize: 11, color: "#fff", background: T.accent, borderRadius: 5, padding: "2px 6px", marginRight: 6 }}>BLOCK</span>
+                        <strong>{ex.name}</strong>{" "}
+                        <span style={{ color: T.sub }}>{b.scheme}{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 13, color: T.sub }}>
+                        {b.movements.map((m, k) => <div key={k}>▸ {m}</div>)}
+                      </div>
+                    </div>
+                  );
+                }
+                const details = getSetDetails(ex);
+                return (
+                  <div key={i} style={{ borderBottom: "1px solid " + T.line, padding: "8px 0" }}>
+                    <div style={{ fontSize: 14 }}>
+                      <strong>{ex.name}</strong>{" "}
+                      {ex.link && (
+                        <a href={ex.link} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 11, fontWeight: 800, background: T.ink, color: "#fff", borderRadius: 6, padding: "2px 7px", textDecoration: "none" }}>
+                          🔗 link
+                        </a>
+                      )}{" "}
+                      <span style={{ color: T.sub }}>{details.length} sets{ex.rest ? ` · rest ${formatRest(ex.rest)}` : ""}</span>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13, color: T.sub }}>
+                      {details.map((s, j) => (
+                        <span key={j} style={{ marginRight: 10 }}>S{j + 1}: {s.reps || "—"}{s.weight ? ` 🏋️ ${s.weight}` : ""}</span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )
+          ) : (<>
 
           <Field label="Workout name">
             <input style={{ ...inputStyle, padding: "8px 12px", fontSize: 14 }} value={day.title}
@@ -2155,12 +2255,12 @@ function updateExerciseField(exIdx, field, value) {
                           onChange={(e) => updateSetDetail(i, j, "reps", e.target.value)} onBlur={persistCurrentDay} />
                         <input style={{ ...smallInput }} placeholder="Weight" value={s.weight || ""}
                           onChange={(e) => updateSetDetail(i, j, "weight", e.target.value)} onBlur={persistCurrentDay} />
-                        <button onClick={() => { removeSet(i, j); persistCurrentDay(); }} title="Remove set"
+                        <button onClick={() => removeSet(i, j)} title="Remove set"
                           style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontWeight: 700 }}>✕</button>
                       </div>
                     ))}
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                      <Btn small kind="ghost" onClick={() => { addSet(i); persistCurrentDay(); }}>+ Add set</Btn>
+                      <Btn small kind="ghost" onClick={() => addSet(i)}>+ Add set</Btn>
                       <span style={{ fontSize: 12, fontWeight: 800, color: T.sub }}>Rest (s):</span>
                       <input style={{ ...smallInput, width: 90 }} placeholder="Rest (s)" value={ex.rest || ""}
                         onChange={(e) => updateRest(i, e.target.value.replace(/\D/g, ""))} onBlur={persistCurrentDay} />
@@ -2225,6 +2325,8 @@ function updateExerciseField(exIdx, field, value) {
               </div>
             )}
           </div>
+          </>)}
+          </>)}
         </Card>
 
         <Card style={{ padding: 18 }}>

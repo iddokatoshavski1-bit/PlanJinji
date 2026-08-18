@@ -37,14 +37,16 @@ async function initDb() {
   )`);
   await q(`CREATE TABLE IF NOT EXISTS workout_days (
     client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    season INTEGER NOT NULL DEFAULT 1,
     week INTEGER NOT NULL,
     day INTEGER NOT NULL,
     title TEXT,
-    UNIQUE (client_id, week, day)
+    UNIQUE (client_id, season, week, day)
   )`);
   await q(`CREATE TABLE IF NOT EXISTS exercises (
     id SERIAL PRIMARY KEY,
     client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    season INTEGER NOT NULL DEFAULT 1,
     week INTEGER NOT NULL,
     day INTEGER NOT NULL,
     position INTEGER NOT NULL,
@@ -60,6 +62,7 @@ async function initDb() {
     date TEXT,
     week INTEGER,
     day INTEGER,
+    season INTEGER NOT NULL DEFAULT 1,
     session_note TEXT
   )`);
   await q(`CREATE TABLE IF NOT EXISTS log_entries (
@@ -85,6 +88,24 @@ async function initDb() {
   await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`);
   await q(`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS link TEXT`);
   await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS season INTEGER NOT NULL DEFAULT 1`);
+
+  // Season-scope the plan tables: starting a new season no longer deletes the old plan, it just
+  // writes under a new season number, so past seasons stay browsable. Existing rows default to
+  // season 1, which is correct for every row that predates this column.
+  await q(`ALTER TABLE workout_days ADD COLUMN IF NOT EXISTS season INTEGER NOT NULL DEFAULT 1`);
+  await q(`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS season INTEGER NOT NULL DEFAULT 1`);
+  await q(`ALTER TABLE session_logs ADD COLUMN IF NOT EXISTS season INTEGER NOT NULL DEFAULT 1`);
+  // workout_days' primary key needs season folded in too, or two seasons' week-0/day-0 rows would
+  // collide. Widen it once, idempotently (skip if some earlier boot already did it).
+  const pkCols = (await q(
+    `SELECT a.attname FROM pg_index i
+     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+     WHERE i.indrelid = 'workout_days'::regclass AND i.indisprimary`
+  )).rows.map((r) => r.attname);
+  if (!pkCols.includes("season")) {
+    await q(`ALTER TABLE workout_days DROP CONSTRAINT workout_days_pkey`);
+    await q(`ALTER TABLE workout_days ADD CONSTRAINT workout_days_pkey PRIMARY KEY (client_id, season, week, day)`);
+  }
 
   const r = await q("SELECT value FROM settings WHERE key = 'coach_pin'");
   if (r.rows.length === 0)
@@ -116,10 +137,12 @@ const isClientPin = (p) => /^\d{4}$/.test(p);
 // A week shows `freq` day slots, but if it already has exercises built past that
 // (e.g. the athlete lowered their frequency after the coach filled in extra days),
 // those built days stay visible instead of vanishing.
-async function assemblePlan(id, freq) {
-  const dayRows = (await q("SELECT * FROM workout_days WHERE client_id = $1", [id])).rows;
+// `season` scopes which season's plan gets assembled — pass the client's current season for
+// normal use, or an older season number to browse a past one (read-only, drafts never apply).
+async function assemblePlan(id, freq, season) {
+  const dayRows = (await q("SELECT * FROM workout_days WHERE client_id = $1 AND season = $2", [id, season])).rows;
   const exRows = (
-    await q("SELECT * FROM exercises WHERE client_id = $1 ORDER BY week, day, position", [id])
+    await q("SELECT * FROM exercises WHERE client_id = $1 AND season = $2 ORDER BY week, day, position", [id, season])
   ).rows;
   const draftRows = (await q("SELECT * FROM exercise_drafts WHERE client_id = $1", [id])).rows;
   const weeks = [];
@@ -167,6 +190,7 @@ async function assembleLogs(id) {
       date: l.date,
       week: l.week,
       day: l.day,
+      season: l.season || 1,
       sessionNote: l.session_note,
       entries: entries.map((e) => ({ exercise: e.exercise, weightUsed: e.weight_used, comment: e.comment })),
     });
@@ -187,7 +211,7 @@ async function fullClient(id, { includePin = false } = {}) {
       joined: c.joined,
       ...(includePin ? { pin: c.pin } : {}),
     },
-    plan: await assemblePlan(id, c.frequency),
+    plan: await assemblePlan(id, c.frequency, c.season || 1),
     progress: { week: c.progress_week, day: c.progress_day },
     xp: c.xp || 0,
     season: c.season || 1,
@@ -206,13 +230,14 @@ function safeFacilities(raw) {
 }
 
 
-async function replaceDay(clientId, week, day, title, exercises) {
+// always writes into `season` (the client's CURRENT season) — past seasons are read-only history
+async function replaceDay(clientId, season, week, day, title, exercises) {
   await q(
-    "INSERT INTO workout_days (client_id, week, day, title) VALUES ($1, $2, $3, $4) " +
-      "ON CONFLICT (client_id, week, day) DO UPDATE SET title = excluded.title",
-    [clientId, week, day, String(title || `Workout ${day + 1}`)]
+    "INSERT INTO workout_days (client_id, season, week, day, title) VALUES ($1, $2, $3, $4, $5) " +
+      "ON CONFLICT (client_id, season, week, day) DO UPDATE SET title = excluded.title",
+    [clientId, season, week, day, String(title || `Workout ${day + 1}`)]
   );
-  await q("DELETE FROM exercises WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
+  await q("DELETE FROM exercises WHERE client_id = $1 AND season = $2 AND week = $3 AND day = $4", [clientId, season, week, day]);
   // exercise positions are about to be rebuilt from scratch — any draft keyed to the old positions is now stale
   await q("DELETE FROM exercise_drafts WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
   const list = exercises || [];
@@ -221,8 +246,8 @@ async function replaceDay(clientId, week, day, title, exercises) {
     const name = String(ex.name || "").trim();
     if (!name) continue;
     await q(
-      "INSERT INTO exercises (client_id, week, day, position, name, sets, reps, weight, rest, link) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-      [clientId, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"), String(ex.link || "").trim()]
+      "INSERT INTO exercises (client_id, season, week, day, position, name, sets, reps, weight, rest, link) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+      [clientId, season, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"), String(ex.link || "").trim()]
     );
   }
 }
@@ -378,8 +403,8 @@ app.post("/api/client/:id/finish", wrap(clientAuth), wrap(async (req, res) => {
   const d = Number.isFinite(bodyDay) ? Math.max(0, bodyDay) : c.progress_day;
 
   const ins = await q(
-    "INSERT INTO session_logs (client_id, date, week, day, session_note) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-    [c.id, new Date().toISOString(), w + 1, d + 1, String(sessionNote || "").trim()]
+    "INSERT INTO session_logs (client_id, date, week, day, season, session_note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+    [c.id, new Date().toISOString(), w + 1, d + 1, c.season || 1, String(sessionNote || "").trim()]
   );
   const logId = ins.rows[0].id;
 
@@ -454,29 +479,44 @@ app.put("/api/coach/client/:id/day", wrap(coachAuth), wrap(async (req, res) => {
   const w = parseInt(week), d = parseInt(day);
   if (isNaN(w) || w < 0 || w >= NUM_WEEKS || isNaN(d) || d < 0 || d >= MAX_DAYS_PER_WEEK)
     return res.status(400).json({ error: "Invalid week/day" });
-  await replaceDay(c.id, w, d, title, exercises);
+  await replaceDay(c.id, c.season || 1, w, d, title, exercises);
   res.json(await fullClient(c.id, { includePin: true }));
 }));
 
-// Start a fresh 5-week season: wipes the current plan grid (workout days/exercises/drafts) and
-// resets progress back to week 1, day 1 — but keeps session history and XP/level untouched, since
-// those track the athlete's lifetime progression, not this one block.
+// Start a fresh 5-week season: opens a brand new, blank plan grid under the next season number
+// and resets progress back to week 1, day 1. The previous season's plan is NOT deleted — it stays
+// exactly as it was, browsable via GET .../season/:season. Session history and XP/level are
+// untouched either way, since those track the athlete's lifetime progression, not one block.
 app.post("/api/coach/client/:id/new-season", wrap(coachAuth), wrap(async (req, res) => {
   const c = await getClientRow(req.params.id);
   if (!c) return res.status(404).json({ error: "Client not found" });
 
+  const nextSeason = (c.season || 1) + 1;
   await q("DELETE FROM exercise_drafts WHERE client_id = $1", [c.id]);
-  await q("DELETE FROM exercises WHERE client_id = $1", [c.id]);
-  await q("DELETE FROM workout_days WHERE client_id = $1", [c.id]);
   await q(
-    "UPDATE clients SET progress_week = 0, progress_day = 0, season = COALESCE(season, 1) + 1 WHERE id = $1",
-    [c.id]
+    "UPDATE clients SET progress_week = 0, progress_day = 0, season = $1 WHERE id = $2",
+    [nextSeason, c.id]
   );
   for (let w = 0; w < NUM_WEEKS; w++)
     for (let d = 0; d < c.frequency; d++)
-      await q("INSERT INTO workout_days (client_id, week, day, title) VALUES ($1,$2,$3,$4)", [c.id, w, d, `Workout ${d + 1}`]);
+      await q(
+        "INSERT INTO workout_days (client_id, season, week, day, title) VALUES ($1,$2,$3,$4,$5)",
+        [c.id, nextSeason, w, d, `Workout ${d + 1}`]
+      );
 
   res.json(await fullClient(c.id, { includePin: true }));
+}));
+
+// Read-only view of a past (or the current) season's plan, so nothing about earlier seasons
+// is ever really gone once a new one starts.
+app.get("/api/coach/client/:id/season/:season", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
+  if (!c) return res.status(404).json({ error: "Client not found" });
+  const season = parseInt(req.params.season);
+  const currentSeason = c.season || 1;
+  if (!Number.isFinite(season) || season < 1 || season > currentSeason)
+    return res.status(400).json({ error: "Invalid season" });
+  res.json({ season, currentSeason, plan: await assemblePlan(c.id, c.frequency, season) });
 }));
 
 app.post("/api/coach/client/:id/reset-pin", wrap(coachAuth), wrap(async (req, res) => {
@@ -525,7 +565,7 @@ Exactly ${c.frequency} days. 4-5 exercises per day. Keep every string short. "re
     const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
     for (let d = 0; d < c.frequency; d++) {
       const src = (parsed.days || [])[d] || {};
-      await replaceDay(c.id, w, d, String(src.title || `Workout ${d + 1}`).slice(0, 40), src.exercises || []);
+      await replaceDay(c.id, c.season || 1, w, d, String(src.title || `Workout ${d + 1}`).slice(0, 40), src.exercises || []);
     }
     res.json(await fullClient(c.id, { includePin: true }));
   } catch (e) {
