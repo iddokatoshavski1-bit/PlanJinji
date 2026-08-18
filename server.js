@@ -84,6 +84,7 @@ async function initDb() {
   // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates a column — patch those in explicitly.
   await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`);
   await q(`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS link TEXT`);
+  await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS season INTEGER NOT NULL DEFAULT 1`);
 
   const r = await q("SELECT value FROM settings WHERE key = 'coach_pin'");
   if (r.rows.length === 0)
@@ -189,6 +190,7 @@ async function fullClient(id, { includePin = false } = {}) {
     plan: await assemblePlan(id, c.frequency),
     progress: { week: c.progress_week, day: c.progress_day },
     xp: c.xp || 0,
+    season: c.season || 1,
     logs: await assembleLogs(id),
   };
 }
@@ -420,7 +422,7 @@ app.post("/api/coach/change-pin", wrap(coachAuth), wrap(async (req, res) => {
 }));
 
 app.get("/api/coach/clients", wrap(coachAuth), wrap(async (req, res) => {
-  const r = await q("SELECT id, name, frequency FROM clients ORDER BY name");
+  const r = await q("SELECT id, name, frequency, season FROM clients ORDER BY name");
   res.json(r.rows);
 }));
 
@@ -453,6 +455,27 @@ app.put("/api/coach/client/:id/day", wrap(coachAuth), wrap(async (req, res) => {
   if (isNaN(w) || w < 0 || w >= NUM_WEEKS || isNaN(d) || d < 0 || d >= MAX_DAYS_PER_WEEK)
     return res.status(400).json({ error: "Invalid week/day" });
   await replaceDay(c.id, w, d, title, exercises);
+  res.json(await fullClient(c.id, { includePin: true }));
+}));
+
+// Start a fresh 5-week season: wipes the current plan grid (workout days/exercises/drafts) and
+// resets progress back to week 1, day 1 — but keeps session history and XP/level untouched, since
+// those track the athlete's lifetime progression, not this one block.
+app.post("/api/coach/client/:id/new-season", wrap(coachAuth), wrap(async (req, res) => {
+  const c = await getClientRow(req.params.id);
+  if (!c) return res.status(404).json({ error: "Client not found" });
+
+  await q("DELETE FROM exercise_drafts WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM exercises WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM workout_days WHERE client_id = $1", [c.id]);
+  await q(
+    "UPDATE clients SET progress_week = 0, progress_day = 0, season = COALESCE(season, 1) + 1 WHERE id = $1",
+    [c.id]
+  );
+  for (let w = 0; w < NUM_WEEKS; w++)
+    for (let d = 0; d < c.frequency; d++)
+      await q("INSERT INTO workout_days (client_id, week, day, title) VALUES ($1,$2,$3,$4)", [c.id, w, d, `Workout ${d + 1}`]);
+
   res.json(await fullClient(c.id, { includePin: true }));
 }));
 

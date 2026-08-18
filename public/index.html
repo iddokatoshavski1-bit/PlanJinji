@@ -1385,6 +1385,23 @@ function updateExerciseField(exIdx, field, value) {
     } catch (e) { setError(e.message); }
   }
 
+  async function startNewSeason() {
+    const next = (coachClient.season || 1) + 1;
+    if (!window.confirm(
+      `Start Season ${next} for ${coachClient.profile.name}? This clears the current 5-week plan grid ` +
+      `and resets their progress back to Week 1. Their session history, XP, and level stay intact.`
+    )) return;
+    setBusy(true); setError("");
+    try {
+      const c = await api(`/coach/client/${coachClient.id}/new-season`, { method: "POST", headers: coachHeaders() });
+      setCoachClient(c);
+      setWeekIdx(0);
+      setDayIdx(0);
+      setExpandedEx(null);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+
   async function changeCoachPin() {
     const p = window.prompt("New coach PIN (4-8 digits):");
     if (!p) return;
@@ -1623,7 +1640,14 @@ function updateExerciseField(exIdx, field, value) {
 
     return shell(
       <div>
-        <div style={{ ...displayStyle, fontSize: 30, marginBottom: 2 }}>{client.profile.name}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 2 }}>
+          <div style={{ ...displayStyle, fontSize: 30 }}>{client.profile.name}</div>
+          {client.season > 1 && (
+            <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 12, background: T.ink, color: "#fff", borderRadius: 999, padding: "3px 10px" }}>
+              Season {client.season}
+            </span>
+          )}
+        </div>
         <Card style={{ marginBottom: 16, padding: 18, background: T.accentSoft, borderColor: T.accentDark }}>
           <div style={{ ...displayStyle, fontSize: 18, marginBottom: 6 }}>
             ⚔️ Level {level} · {title}
@@ -1911,7 +1935,14 @@ function updateExerciseField(exIdx, field, value) {
             clientList.map((c) => (
               <Card key={c.id} style={{ marginBottom: 12, padding: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div onClick={() => openCoachClient(c.id)} style={{ ...displayStyle, fontSize: 17, cursor: "pointer", flex: 1 }}>{c.name}</div>
+                  <div onClick={() => openCoachClient(c.id)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flex: 1 }}>
+                    <span style={{ ...displayStyle, fontSize: 17 }}>{c.name}</span>
+                    {c.season > 1 && (
+                      <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 11, background: T.line, color: T.sub, borderRadius: 999, padding: "2px 8px" }}>
+                        Season {c.season}
+                      </span>
+                    )}
+                  </div>
                   <span onClick={() => openCoachClient(c.id)} style={{ color: T.accent, fontWeight: 800, cursor: "pointer" }}>Open →</span>
                   <button onClick={(e) => { e.stopPropagation(); deleteClient(c.id, c.name); }}
                     title={`Delete ${c.name}`}
@@ -1937,9 +1968,15 @@ function updateExerciseField(exIdx, field, value) {
           style={{ background: "none", border: "none", color: T.sub, fontFamily: fontStack, fontSize: 13, cursor: "pointer", marginBottom: 10, textDecoration: "underline" }}>
           ← All clients
         </button>
-        <div style={{ ...displayStyle, fontSize: 28, marginBottom: 4 }}>{p.name}</div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: T.accentDark, marginBottom: 14 }}>
-          {progDone ? "🏆 Finished the 5-week program" : `Next up for them: Week ${coachClient.progress.week + 1}, workout ${coachClient.progress.day + 1} of ${p.frequency}`}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+          <div style={{ ...displayStyle, fontSize: 28 }}>{p.name}</div>
+          <span style={{ fontFamily: fontStack, fontWeight: 800, fontSize: 12, background: T.ink, color: "#fff", borderRadius: 999, padding: "3px 10px" }}>
+            Season {coachClient.season || 1}
+          </span>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.accentDark, marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>{progDone ? "🏆 Finished the 5-week program" : `Next up for them: Week ${coachClient.progress.week + 1}, workout ${coachClient.progress.day + 1} of ${p.frequency}`}</span>
+          <Btn small kind="ghost" onClick={startNewSeason} disabled={busy}>🔄 Start new season</Btn>
         </div>
 
         <Card style={{ marginBottom: 16, padding: 18 }}>
