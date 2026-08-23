@@ -724,23 +724,30 @@ function lastWeightFor(logs, exName) {
 }
 // most recent weight the athlete themselves logged for this exercise AT THIS SAME REP COUNT —
 // e.g. today's set is 3 reps, so find the last time they did 3 reps here, even if that was
-// several weeks back and last week's sessions were all 8-rep sets. Own logged results only,
-// never the coach's prescribed target weight.
+// several weeks back and last week's sessions were all 8-rep sets. If they've never done this
+// exact rep count before, falls back to whatever they most recently did for this exercise at
+// all (any rep count) — so a new/rarely-repeated exercise still shows something the very next
+// time it comes up, instead of nothing until the rep scheme happens to match exactly. Own
+// logged results only, never the coach's prescribed target weight.
 function lastWeightForReps(logs, exName, targetReps) {
   const target = String(exName || "").trim().toLowerCase();
   const reps = String(targetReps || "").trim();
-  if (!reps) return null;
+  let fallback = null;
   for (let i = (logs || []).length - 1; i >= 0; i--) {
     for (const e of logs[i].entries || []) {
       if (String(e.exercise || "").trim().toLowerCase() !== target) continue;
       const tokens = String(e.weightUsed || "").split("/").map((t) => t.trim()).filter(Boolean);
       for (const tok of tokens) {
         const m = tok.match(/^(.*?)×(.+)$/);
-        if (m && m[1].trim() === reps) return { weight: m[2].trim(), date: logs[i].date };
+        if (!m) continue;
+        const tokReps = m[1].trim();
+        const tokWeight = m[2].trim();
+        if (reps && tokReps === reps) return { weight: tokWeight, reps: tokReps, date: logs[i].date, exact: true };
+        if (!fallback) fallback = { weight: tokWeight, reps: tokReps, date: logs[i].date, exact: false };
       }
     }
   }
-  return null;
+  return fallback;
 }
 // pulls a URL out of any text, returns { text, url }
 function splitLink(str) {
@@ -1894,7 +1901,9 @@ function updateExerciseField(exIdx, field, value) {
                           </div>
                           {repMatch && (
                             <div style={{ fontSize: 12, fontWeight: 700, color: T.accentDark, marginTop: 4 }}>
-                              📈 Last time @ {s.reps} reps: {repMatch.weight} ({new Date(repMatch.date).toLocaleDateString()})
+                              📈 {repMatch.exact
+                                ? `Last time @ ${s.reps} reps: ${repMatch.weight}`
+                                : `Last time (${repMatch.reps} reps): ${repMatch.weight}`} ({new Date(repMatch.date).toLocaleDateString()})
                             </div>
                           )}
                         </div>
