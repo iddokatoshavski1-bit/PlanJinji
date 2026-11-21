@@ -84,6 +84,26 @@ async function initDb() {
     updated_at TEXT,
     PRIMARY KEY (client_id, week, day, position)
   )`);
+  // Permanent record of every per-exercise Save, so the coach sees what the athlete did on each
+  // exercise even if they never hit Finish. Unlike drafts, these are never cleared — not by
+  // finishing the workout, not by the coach editing the day. The exercise name and its target
+  // are copied in at save time so the record stays meaningful after the plan changes.
+  // One row per exercise slot per season; saving again updates it.
+  await q(`CREATE TABLE IF NOT EXISTS exercise_saves (
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    season INTEGER NOT NULL DEFAULT 1,
+    week INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    exercise TEXT,
+    target_sets TEXT,
+    target_reps TEXT,
+    target_weight TEXT,
+    weights TEXT,
+    comment TEXT,
+    saved_at TEXT,
+    PRIMARY KEY (client_id, season, week, day, position)
+  )`);
   // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates a column — patch those in explicitly.
   await q(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`);
   await q(`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS link TEXT`);
@@ -198,6 +218,18 @@ async function assembleLogs(id) {
   return out;
 }
 
+async function assembleSaves(id) {
+  const rows = (await q("SELECT * FROM exercise_saves WHERE client_id = $1 ORDER BY saved_at", [id])).rows;
+  return rows.map((r) => ({
+    season: r.season, week: r.week + 1, day: r.day + 1, position: r.position, // week/day 1-based, like logs
+    exercise: r.exercise || "",
+    target: { sets: r.target_sets || "", reps: r.target_reps || "", weight: r.target_weight || "" },
+    weights: safeParseArr(r.weights),
+    comment: r.comment || "",
+    savedAt: r.saved_at,
+  }));
+}
+
 async function fullClient(id, { includePin = false } = {}) {
   const c = await getClientRow(id);
   if (!c) return null;
@@ -216,6 +248,7 @@ async function fullClient(id, { includePin = false } = {}) {
     xp: c.xp || 0,
     season: c.season || 1,
     logs: await assembleLogs(id),
+    saves: await assembleSaves(id),
   };
 }
 function safeFacilities(raw) {
@@ -347,6 +380,22 @@ app.put("/api/client/:id/draft", wrap(clientAuth), wrap(async (req, res) => {
      DO UPDATE SET weights = excluded.weights, comment = excluded.comment, updated_at = excluded.updated_at`,
     [c.id, w, d, pos, JSON.stringify(Array.isArray(weights) ? weights : []), String(comment || "").trim(), new Date().toISOString()]
   );
+
+  // ...and the permanent copy the coach sees, with the target it was saved against
+  const season = c.season || 1;
+  const ex = (await q(
+    "SELECT name, sets, reps, weight FROM exercises WHERE client_id = $1 AND season = $2 AND week = $3 AND day = $4 ORDER BY position",
+    [c.id, season, w, d]
+  )).rows[pos] || {};
+  await q(
+    `INSERT INTO exercise_saves (client_id, season, week, day, position, exercise, target_sets, target_reps, target_weight, weights, comment, saved_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (client_id, season, week, day, position)
+     DO UPDATE SET exercise = excluded.exercise, target_sets = excluded.target_sets, target_reps = excluded.target_reps,
+       target_weight = excluded.target_weight, weights = excluded.weights, comment = excluded.comment, saved_at = excluded.saved_at`,
+    [c.id, season, w, d, pos, ex.name || "", ex.sets || "", ex.reps || "", ex.weight || "",
+      JSON.stringify(Array.isArray(weights) ? weights : []), String(comment || "").trim(), new Date().toISOString()]
+  );
   res.json(await fullClient(c.id));
 }));
 
@@ -465,6 +514,7 @@ app.delete("/api/coach/client/:id", wrap(coachAuth), wrap(async (req, res) => {
   const logs = (await q("SELECT id FROM session_logs WHERE client_id = $1", [c.id])).rows;
   for (const row of logs) await q("DELETE FROM log_entries WHERE log_id = $1", [row.id]);
   await q("DELETE FROM session_logs WHERE client_id = $1", [c.id]);
+  await q("DELETE FROM exercise_saves WHERE client_id = $1", [c.id]);
   await q("DELETE FROM exercises WHERE client_id = $1", [c.id]);
   await q("DELETE FROM workout_days WHERE client_id = $1", [c.id]);
   await q("DELETE FROM clients WHERE id = $1", [c.id]);

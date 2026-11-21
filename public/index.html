@@ -434,22 +434,65 @@ function PraiseBubble({ text }) {
 
 // ---------- multi-set countdown timer ----------
 // Runs `sets` rounds of `seconds` back to back, beeping between each.
-// Deadline-based (not tick-based) so it stays accurate if iOS throttles the tab.
-function SetTimer({ seconds, sets, label }) {
+// Everything is derived from wall-clock timestamps, never from counting ticks: when the athlete
+// leaves the app the phone freezes JS, and on return the timer lands on the right set/second
+// (even if several sets went by meanwhile). State is also saved under `storageKey`, so the timer
+// survives the phone reloading the page in the background.
+const PREP_MS = 3000;
+// Identifies one exercise's timer. Used as the React key too, so switching day/week (or the coach
+// changing the rest/sets) mounts a fresh timer instead of reusing the old one's stale seconds.
+function timerKey(client, w, d, i, ex, sets) {
+  return [client.id, client.season || 1, w, d, i, ex.name, ex.rest, sets].join(":");
+}
+function SetTimer({ seconds, sets, label, storageKey }) {
   const total = Math.max(1, parseInt(sets) || 1);
   const per = Math.max(1, parseInt(seconds) || 0);
+  const perMs = per * 1000;
+  const lsKey = storageKey ? "pj-timer:" + storageKey : null;
 
-  const [setNo, setSetNo] = useState(1);
-  const [left, setLeft] = useState(per);
-  const [running, setRunning] = useState(false);
-  const [finished, setFinished] = useState(false);
-  const [prep, setPrep] = useState(0); // 3..1 "get ready" countdown before the very first set starts
-
-  const deadline = useRef(null);
-  const setNoRef = useRef(1);
+  // phase: idle | prep | running | paused | done
+  //   prep    → prepEnd is when set 1 begins
+  //   running → anchor is when set 1 began (shifted forward by pauses, back by skips)
+  //   paused  → pausedAt is how many ms into the whole run we stopped
+  const [st, setSt] = useState(() => {
+    if (lsKey) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(lsKey) || "null");
+        if (saved && saved.per === per && saved.total === total) return saved;
+      } catch (e) { /* storage unavailable — start fresh */ }
+    }
+    return { phase: "idle", per, total };
+  });
+  const [now, setNow] = useState(Date.now());
   const ctxRef = useRef(null);
-  const warnRef = useRef(0); // last countdown second we already beeped for, so we don't re-beep on every 200ms tick
-  const beganRef = useRef(false); // true once the first set has actually started counting down
+  const warnRef = useRef(""); // last "set:second" we beeped for, so a 200ms tick doesn't re-beep
+
+  useEffect(() => {
+    if (!lsKey) return;
+    try {
+      if (st.phase === "idle") localStorage.removeItem(lsKey);
+      else localStorage.setItem(lsKey, JSON.stringify(st));
+    } catch (e) { /* ignore */ }
+  }, [st, lsKey]);
+
+  // where in the run we are right now
+  let phase = st.phase, setNo = 1, left = per, prep = 0;
+  if (phase === "prep") {
+    if (now >= st.prepEnd) phase = "running";
+    else prep = Math.ceil((st.prepEnd - now) / 1000);
+  }
+  if (phase === "running" || phase === "paused") {
+    const anchor = st.phase === "prep" ? st.prepEnd : st.anchor;
+    const elapsed = phase === "paused" ? st.pausedAt : now - anchor;
+    if (elapsed >= total * perMs) phase = "done";
+    else {
+      setNo = Math.floor(elapsed / perMs) + 1;
+      left = Math.ceil((setNo * perMs - elapsed) / 1000);
+    }
+  }
+  if (phase === "done") { setNo = total; left = 0; }
+  const running = phase === "running";
+  const finished = phase === "done";
 
   // iOS only allows audio created/resumed inside a real tap, so we make the
   // AudioContext on the first Start press and reuse it for every later beep.
@@ -476,84 +519,83 @@ function SetTimer({ seconds, sets, label }) {
     } catch (e) { /* ignore */ }
   }
 
-  // "get ready" countdown — runs once before the very first set, then hands off to the real timer
+  // tick while live; also re-sync the instant the athlete comes back to the app
+  const live = st.phase === "prep" || st.phase === "running";
   useEffect(() => {
-    if (prep <= 0) return;
-    beep(prep === 1);                                  // beep, beep, beeeep on the last tick
-    const t = setTimeout(() => {
-      if (prep === 1) {
-        setPrep(0);
-        warnRef.current = 0;
-        beganRef.current = true;
-        deadline.current = Date.now() + per * 1000;
-        setRunning(true);
-      } else {
-        setPrep(prep - 1);
-      }
-    }, 1000);
-    return () => clearTimeout(t);
-  }, [prep, per]);
+    if (!live) return;
+    const tick = () => setNow(Date.now());
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // phones suspend audio in the background — wake it back up so beeps keep working
+      try { if (ctxRef.current && ctxRef.current.state !== "running") ctxRef.current.resume(); } catch (e) { /* ignore */ }
+      warnRef.current = "skip"; // don't fire a stale warning beep the moment we come back
+      tick();
+    };
+    tick();
+    const id = setInterval(tick, 200);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [live]);
 
+  // beep, beep, beeeep — on the "get ready" countdown and the last 3 seconds of every set
   useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => {
-      const rem = Math.round((deadline.current - Date.now()) / 1000);
-      if (rem > 0) {
-        setLeft(rem);
-        if (rem <= 3 && warnRef.current !== rem) {      // beep, beep, beeeep — 3 seconds warning before the set changes
-          warnRef.current = rem;
-          beep(rem === 1);
-        }
-        return;
-      }
+    const sec = phase === "prep" ? prep : running && left <= 3 ? left : 0;
+    if (!sec) return;
+    const mark = phase + ":" + setNo + ":" + sec;
+    if (warnRef.current === "skip") { warnRef.current = mark; return; }
+    if (warnRef.current === mark) return;
+    warnRef.current = mark;
+    beep(sec === 1);
+  }, [phase, prep, running, left, setNo]);
 
-      if (setNoRef.current < total) {
-        setNoRef.current += 1;
-        setSetNo(setNoRef.current);
-        deadline.current = Date.now() + per * 1000;
-        setLeft(per);
-        warnRef.current = 0;
-      } else {
-        clearInterval(id);
-        setRunning(false);
-        setFinished(true);
-        setLeft(0);
-      }
-    }, 200);
-    return () => clearInterval(id);
-  }, [running, per, total]);
+  // a finished run settles into "done" so it stops ticking (and gets saved that way)
+  useEffect(() => {
+    if (finished && st.phase !== "done") setSt({ phase: "done", per, total });
+  }, [finished, st.phase, per, total]);
+
+  function elapsedNow() {
+    const t = Date.now();
+    if (st.phase === "paused") return st.pausedAt;
+    if (st.phase === "prep") return Math.max(0, t - st.prepEnd);
+    if (st.phase === "running") return t - st.anchor;
+    return 0;
+  }
 
   function start() {
     ensureAudio();
-    const isFreshStart = finished || !beganRef.current;
-    if (isFreshStart) {                                 // first set (or restarting from the top) — 3s "get ready" first
-      setNoRef.current = 1; setSetNo(1); setLeft(per); setFinished(false);
-      warnRef.current = 0;
-      beganRef.current = false;
-      setPrep(3);
-      return;
+    warnRef.current = "";
+    if (st.phase === "paused") {                        // resume from where paused
+      setSt({ phase: "running", anchor: Date.now() - st.pausedAt, per, total });
+    } else {                                            // fresh start (or again) — 3s "get ready" first
+      setSt({ phase: "prep", prepEnd: Date.now() + PREP_MS, per, total });
     }
-    deadline.current = Date.now() + left * 1000;        // resume from where paused
-    setRunning(true);
+    setNow(Date.now());
+  }
+
+  function pause() {
+    setSt({ phase: "paused", pausedAt: elapsedNow(), per, total });
   }
 
   function reset() {
-    setRunning(false); setFinished(false); setPrep(0);
-    setNoRef.current = 1; setSetNo(1); setLeft(per);
-    warnRef.current = 0;
-    beganRef.current = false;
+    setSt({ phase: "idle", per, total });
+    warnRef.current = "";
   }
 
   function skip() {
-    if (setNoRef.current < total) {
-      setNoRef.current += 1;
-      setSetNo(setNoRef.current);
-      deadline.current = Date.now() + per * 1000;
-      setLeft(per);
-      warnRef.current = 0;
-    } else {
-      setRunning(false); setFinished(true); setLeft(0);
-    }
+    const cur = Math.floor(elapsedNow() / perMs) + 1;
+    if (cur >= total) { setSt({ phase: "done", per, total }); return; }
+    const jumpTo = cur * perMs;                         // the start of the next set
+    if (st.phase !== "running" && st.phase !== "prep") setSt({ phase: "paused", pausedAt: jumpTo, per, total });
+    else setSt({ phase: "running", anchor: Date.now() - jumpTo, per, total });
+    warnRef.current = "";
+    setNow(Date.now());
   }
 
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
@@ -587,7 +629,7 @@ function SetTimer({ seconds, sets, label }) {
 
         <div style={{ display: "flex", gap: 6 }}>
           <Btn small kind={running ? "ghost" : "accent"} disabled={prep > 0}
-            onClick={() => (running ? setRunning(false) : start())}>
+            onClick={() => (running ? pause() : start())}>
             {running ? "⏸" : prep > 0 ? `${prep}…` : finished ? "↺ Again" : "▶ Start"}
           </Btn>
           {!finished && <Btn small kind="ghost" onClick={skip} disabled={prep > 0}>⏭</Btn>}
@@ -596,6 +638,56 @@ function SetTimer({ seconds, sets, label }) {
       </div>
     </div>
   );
+}
+
+// ---------- per-exercise saves ----------
+// Turns one exercise Save into display text. Saving with nothing typed means the athlete
+// confirmed they did it as written — that's reported as "done as planned" with the target.
+function describeSave(sv) {
+  const t = sv.target || {};
+  const ws = sv.weights || [];
+  if (isBlock(t)) {
+    const res = String(ws[0] || "").trim();
+    return { result: res || "✓ Done as planned", asPlanned: !res, target: t.weight || "" };
+  }
+  const details = getSetDetails(t);
+  const target = details.map((s) => (s.weight ? `${s.reps || "?"}×${s.weight}` : s.reps || "")).filter(Boolean).join(" / ");
+  const tokens = details
+    .map((s, j) => (String(ws[j] || "").trim() ? (s.reps ? `${s.reps}×${ws[j]}` : String(ws[j])) : null))
+    .filter(Boolean);
+  return { result: tokens.length ? tokens.join(" / ") : "✓ Done as planned", asPlanned: !tokens.length, target };
+}
+
+// ---------- results export ----------
+// One row per exercise, as a CSV Excel opens directly: every finished workout, plus every
+// per-exercise Save (even ones never followed by Finish). The BOM makes Excel read it as
+// UTF-8, otherwise Hebrew names/comments come out as gibberish.
+function downloadLogsCsv(client) {
+  const cell = (v) => {
+    const s = String(v == null ? "" : v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = [["Type", "Date", "Time", "Season", "Week", "Workout", "Exercise", "Target", "Result", "Comment", "Session note"]];
+  const stamp = (iso) => { const dt = new Date(iso); return [dt.toLocaleDateString(), dt.toLocaleTimeString()]; };
+  for (const log of client.logs || []) {
+    const base = ["Finished workout", ...stamp(log.date), log.season || 1, log.week || "", log.day || ""];
+    const entries = (log.entries || []).length ? log.entries : [{}];
+    for (const e of entries)
+      rows.push([...base, e.exercise || "", "", e.weightUsed || "", e.comment || "", log.sessionNote || ""]);
+  }
+  for (const sv of client.saves || []) {
+    const { result, target } = describeSave(sv);
+    rows.push(["Exercise save", ...stamp(sv.savedAt), sv.season, sv.week, sv.day, sv.exercise, target, result, sv.comment, ""]);
+  }
+  const csv = "﻿" + rows.map((r) => r.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(client.profile && client.profile.name) || client.id} - results.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ---------- XP / level helpers (doubling curve) ----------
@@ -947,7 +1039,7 @@ function PlanJinji() {
     const newComments = {};
     const newSaved = {};
     weekDays[d].exercises.forEach((ex, i) => {
-      if (ex.draft && (ex.draft.weights.length || ex.draft.comment)) {
+      if (ex.draft) { // any draft means Save was pressed — even an empty one ("did it as planned")
         newWeights[i] = ex.draft.weights;
         newComments[i] = ex.draft.comment;
         newSaved[i] = true;
@@ -1810,7 +1902,8 @@ function updateExerciseField(exIdx, field, value) {
                       </div>
                     </div>
                     {parseInt(ex.rest) > 0 && (
-                      <SetTimer seconds={parseInt(ex.rest)} sets={decodeBlock(ex).rounds} />
+                      <SetTimer key={timerKey(client, w, d, i, ex, b.rounds)} storageKey={timerKey(client, w, d, i, ex, b.rounds)}
+                        seconds={parseInt(ex.rest)} sets={b.rounds} />
                     )}
                     {last && (
                       <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: T.accentDark, background: T.accentSoft, display: "inline-block", borderRadius: 6, padding: "4px 10px" }}>
@@ -1878,7 +1971,8 @@ function updateExerciseField(exIdx, field, value) {
                   </div>
 
                   {parseInt(ex.rest) > 0 && (
-                    <SetTimer seconds={parseInt(ex.rest)} sets={details.length} />
+                    <SetTimer key={timerKey(client, w, d, i, ex, details.length)} storageKey={timerKey(client, w, d, i, ex, details.length)}
+                      seconds={parseInt(ex.rest)} sets={details.length} />
                   )}
                   <div style={{ marginTop: 12, borderTop: "1px solid " + T.line }}>
                     {details.map((s, j) => {
@@ -2176,9 +2270,9 @@ function updateExerciseField(exIdx, field, value) {
                       📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
                     </div>
                   )}
-                  {ex.draft && (ex.draft.weights.some(Boolean) || ex.draft.comment) && (
+                  {ex.draft && (
                     <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accent }}>
-                      📝 In progress: {ex.draft.weights.map((v) => v || "—").join(" / ") || "—"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
+                      📝 In progress: {ex.draft.weights.some(Boolean) ? ex.draft.weights.map((v) => v || "—").join(" / ") : "✓ done as planned"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
                     </div>
                   )}
                   {open && (
@@ -2244,9 +2338,9 @@ function updateExerciseField(exIdx, field, value) {
                     📈 Last logged ({new Date(lastRes.date).toLocaleDateString()}): {lastRes.weight}{lastRes.comment ? ` — "${lastRes.comment}"` : ""}
                   </div>
                 )}
-                {ex.draft && (ex.draft.weights.some(Boolean) || ex.draft.comment) && (
+                {ex.draft && (
                   <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: T.accent }}>
-                    📝 In progress: {ex.draft.weights.map((v) => v || "—").join(" / ") || "—"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
+                    📝 In progress: {ex.draft.weights.some(Boolean) ? ex.draft.weights.map((v) => v || "—").join(" / ") : "✓ done as planned"}{ex.draft.comment ? ` — "${ex.draft.comment}"` : ""}
                   </div>
                 )}
                 {open && (
@@ -2339,7 +2433,12 @@ function updateExerciseField(exIdx, field, value) {
         </Card>
 
         <Card style={{ padding: 18 }}>
-          <SectionLabel>Session feedback ({(coachClient.logs || []).length})</SectionLabel>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <SectionLabel>Session feedback ({(coachClient.logs || []).length})</SectionLabel>
+            {((coachClient.logs || []).length > 0 || (coachClient.saves || []).length > 0) && (
+              <Btn small kind="ghost" onClick={() => downloadLogsCsv(coachClient)}>⬇ Download Excel</Btn>
+            )}
+          </div>
           {(coachClient.logs || []).length === 0 && (
             <p style={{ color: T.sub, fontSize: 14, margin: 0 }}>No logged sessions yet.</p>
           )}
@@ -2356,6 +2455,32 @@ function updateExerciseField(exIdx, field, value) {
               ))}
             </div>
           ))}
+        </Card>
+
+        <Card style={{ padding: 18, marginTop: 14 }}>
+          <SectionLabel>Exercise saves ({(coachClient.saves || []).length})</SectionLabel>
+          <p style={{ color: T.sub, fontSize: 13, margin: "0 0 6px" }}>
+            Every exercise the athlete hit Save on — whether or not they finished the workout.
+          </p>
+          {(coachClient.saves || []).length === 0 && (
+            <p style={{ color: T.sub, fontSize: 14, margin: 0 }}>No saved exercises yet.</p>
+          )}
+          {[...(coachClient.saves || [])].reverse().map((sv, i) => {
+            const { result, asPlanned, target } = describeSave(sv);
+            return (
+              <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid " + T.line, fontSize: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>
+                  {new Date(sv.savedAt).toLocaleString()} · Season {sv.season} · Week {sv.week}, workout {sv.day}
+                </div>
+                <div>
+                  <strong>{sv.exercise}</strong>:{" "}
+                  <strong style={{ color: asPlanned ? T.good : T.accentDark }}>{result}</strong>
+                  {target && <span style={{ color: T.sub }}> (target {target})</span>}
+                  {sv.comment && <span style={{ color: T.sub }}> — "{sv.comment}"</span>}
+                </div>
+              </div>
+            );
+          })}
         </Card>
       </div>,
       { wide: true }

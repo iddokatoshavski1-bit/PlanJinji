@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS clients (
   pin           TEXT,                      -- 4-digit login PIN (NULL = must set on next login)
   joined        TEXT NOT NULL,             -- ISO date
   progress_week INTEGER NOT NULL DEFAULT 0,-- 0-based; 5 means program complete
-  progress_day  INTEGER NOT NULL DEFAULT 0 -- 0-based index of next workout
+ progress_day  INTEGER NOT NULL DEFAULT 0,
+xp            INTEGER NOT NULL DEFAULT 0 -- 0-based index of next workout
 );
 
 CREATE TABLE IF NOT EXISTS workout_days (
