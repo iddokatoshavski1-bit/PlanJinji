@@ -17,6 +17,22 @@ const pool = new Pool({
 });
 const q = (text, params = []) => pool.query(text, params);
 
+// Runs fn inside one transaction on a single connection; fn gets a query function like `q`.
+async function withTx(fn) {
+  const conn = await pool.connect();
+  try {
+    await conn.query("BEGIN");
+    const result = await fn((text, params = []) => conn.query(text, params));
+    await conn.query("COMMIT");
+    return result;
+  } catch (e) {
+    await conn.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
 // Creates every table if it doesnt already exist, then seeds the coach PIN.
 async function initDb() {
   await q(`CREATE TABLE IF NOT EXISTS settings (
@@ -264,25 +280,31 @@ function safeFacilities(raw) {
 
 
 // always writes into `season` (the client's CURRENT season) — past seasons are read-only history
+// Runs as one transaction holding a lock on this exact day: the coach screen often fires two saves
+// at once (an input's blur + the button click that caused it), and unlocked, both would DELETE
+// before either INSERTs — leaving every exercise doubled. Now the second save waits its turn.
 async function replaceDay(clientId, season, week, day, title, exercises) {
-  await q(
-    "INSERT INTO workout_days (client_id, season, week, day, title) VALUES ($1, $2, $3, $4, $5) " +
-      "ON CONFLICT (client_id, season, week, day) DO UPDATE SET title = excluded.title",
-    [clientId, season, week, day, String(title || `Workout ${day + 1}`)]
-  );
-  await q("DELETE FROM exercises WHERE client_id = $1 AND season = $2 AND week = $3 AND day = $4", [clientId, season, week, day]);
-  // exercise positions are about to be rebuilt from scratch — any draft keyed to the old positions is now stale
-  await q("DELETE FROM exercise_drafts WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
-  const list = exercises || [];
-  for (let i = 0; i < list.length; i++) {
-    const ex = list[i];
-    const name = String(ex.name || "").trim();
-    if (!name) continue;
+  await withTx(async (q) => {
+    await q("SELECT pg_advisory_xact_lock(hashtext($1))", [`day:${clientId}:${season}:${week}:${day}`]);
     await q(
-      "INSERT INTO exercises (client_id, season, week, day, position, name, sets, reps, weight, rest, link) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-      [clientId, season, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"), String(ex.link || "").trim()]
+      "INSERT INTO workout_days (client_id, season, week, day, title) VALUES ($1, $2, $3, $4, $5) " +
+        "ON CONFLICT (client_id, season, week, day) DO UPDATE SET title = excluded.title",
+      [clientId, season, week, day, String(title || `Workout ${day + 1}`)]
     );
-  }
+    await q("DELETE FROM exercises WHERE client_id = $1 AND season = $2 AND week = $3 AND day = $4", [clientId, season, week, day]);
+    // exercise positions are about to be rebuilt from scratch — any draft keyed to the old positions is now stale
+    await q("DELETE FROM exercise_drafts WHERE client_id = $1 AND week = $2 AND day = $3", [clientId, week, day]);
+    const list = exercises || [];
+    for (let i = 0; i < list.length; i++) {
+      const ex = list[i];
+      const name = String(ex.name || "").trim();
+      if (!name) continue;
+      await q(
+        "INSERT INTO exercises (client_id, season, week, day, position, name, sets, reps, weight, rest, link) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        [clientId, season, week, day, i, name, String(ex.sets || ""), String(ex.reps || ""), String(ex.weight || ""), String(ex.rest || "90"), String(ex.link || "").trim()]
+      );
+    }
+  });
 }
 
 // ---------- app ----------
